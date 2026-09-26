@@ -1,0 +1,6 @@
+- [ ] Define Navigation 3 Keys (`NavKey.kt`)
+- [ ] Implement `MainRepository.kt`
+- [ ] Implement `MainViewModel.kt`
+- [ ] Create placeholder Screens (`MainScreen`, `ConfigureScreen`, `DisplayScreen`)
+- [ ] Update `MainActivity.kt` with Navigation 3 logic
+- [ ] Verify navigation and state
