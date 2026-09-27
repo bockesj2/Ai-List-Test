@@ -85,6 +85,11 @@ class B_Radio_Button : LiveDataDisplayType() {
     override val tagDataType = "B"
 }
 
+class B_Default : LiveDataDisplayType() {
+    override val name = "Default (Numeric entry)"
+    override val tagDataType = "B"
+}
+
 // Double Word Integer ("DD") Display Types
 class DD_Default : LiveDataDisplayType() {
     override val name = "Default (Numeric entry)"
@@ -132,6 +137,7 @@ object DisplayTypes {
         B_Switch(),
         B_CheckBox(),
         B_Radio_Button(),
+        B_Default(),
         DD_Default(),
         DD_List(),
         DS_Default(),
@@ -142,7 +148,7 @@ object DisplayTypes {
     )
 
     private val optionsByDataType: Map<String, List<String>> = mapOf(
-        "B" to listOf("On_Button", "Off_Button", "Toggle_Button", "Switch", "CheckBox", "Radio_Button"),
+        "B" to listOf("Default (Numeric entry)", "On_Button", "Off_Button", "Toggle_Button", "Switch", "CheckBox", "Radio_Button"),
         "DD" to listOf("Default (Numeric entry)", "List (Text based upon value)"),
         "DS" to listOf("Default (Numeric entry)", "List (Text based upon value)"),
         "DH" to listOf("Default (Numeric entry)", "List (Text based upon value)"),
@@ -155,7 +161,7 @@ object DisplayTypes {
 
     fun getHandler(tagDataType: String, displayTypeName: String): LiveDataDisplayType {
         val cleanDataType = tagDataType.uppercase().trim()
-        val defaultName = if (cleanDataType == "B") "On_Button" else "Default (Numeric entry)"
+        val defaultName = "Default (Numeric entry)"
         val rawName = displayTypeName.trim().ifEmpty { defaultName }
 
         val cleanName = when (rawName.lowercase()) {

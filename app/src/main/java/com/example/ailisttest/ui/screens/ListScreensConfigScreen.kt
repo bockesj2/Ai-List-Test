@@ -36,6 +36,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -853,6 +854,7 @@ fun ListScreensTreeList(
                                 isExpanded = isCustomGroupExpanded,
                                 onToggleExpand = { viewModel.toggleCustomGroupExpanded(groupId) },
                                 selectedItem = selectedItem,
+                                viewModel = viewModel,
                                 onSelect = {
                                     if (customGroup != null) {
                                         onItemSelected(SelectedListItem.CustomGroupItem(customGroup!!, itemWithTag, screen))
@@ -911,6 +913,8 @@ fun ListScreensTreeList(
                                 onToggleExpand = { viewModel.togglePacketGroupExpanded(item.id) },
                                 selectedItem = selectedItem,
                                 screenItems = screenWithItems.items,
+                                expandedTagGroups = expandedTagGroups,
+                                viewModel = viewModel,
                                 onSelect = { onItemSelected(SelectedListItem.Item(itemWithTag, screen)) },
                                 onSelectChild = { childWithTag -> onItemSelected(SelectedListItem.Item(childWithTag, screen)) },
                                 onInsertAtItem = { onInsertTagAtItem(screen, itemWithTag) },
@@ -970,6 +974,23 @@ fun ListScreensTreeList(
                                 val calcOffset = tag?.offset ?: (parentPacket?.offset ?: 1)
                                 val combinedBadgeText = if (isBitTagItem) "$tagShortName$calcOffset:$bitIndex" else "$tagShortName$calcOffset"
 
+                                val tagRawDisplayType = item.DisplayType.ifEmpty {
+                                    DisplayTypes.getOptionsForDataType(
+                                        if (isBitTagItem) "B" else packetDataType.shortName.ifEmpty { packetDataType.description }
+                                    ).first()
+                                }
+
+                                val tagListItemsFlow = remember(tag?.id) { tag?.id?.let { viewModel.getListItemsForTag(it) } }
+                                val tagListItems by tagListItemsFlow?.collectAsStateWithLifecycle(initialValue = emptyList()) ?: remember { mutableStateOf(emptyList()) }
+                                val isListDisplayType = tagRawDisplayType.contains("List", ignoreCase = true)
+                                val tagFormattedVal = if (isListDisplayType && tag != null) {
+                                    val numVal = tag.storedValue.toIntOrNull()
+                                    val match = if (numVal != null) tagListItems.find { it.number == numVal } else null
+                                    match?.label ?: "Undefined"
+                                } else {
+                                    tag?.storedValue ?: "(empty)"
+                                }
+
                                 ListScreenRow(
                                     text = displayTitle,
                                     subtitle = "Index: ${item.ScreenIndex}" + (tag?.storedValue?.let { " (Val: $it)" } ?: ""),
@@ -979,6 +1000,10 @@ fun ListScreensTreeList(
                                     hasChildren = false,
                                     badgeText = combinedBadgeText,
                                     badgeColor = badgeColor,
+                                    displayType = tagRawDisplayType,
+                                    isBitTagItem = isBitTagItem,
+                                    isBitSet = false,
+                                    storedValue = tagFormattedVal,
                                     onToggleExpand = {},
                                     onSelect = { onItemSelected(SelectedListItem.Item(itemWithTag, screen)) },
                                     onAdd = null,
@@ -1010,6 +1035,7 @@ fun CustomGroupItemBox(
     isExpanded: Boolean = false,
     onToggleExpand: () -> Unit = {},
     selectedItem: SelectedListItem?,
+    viewModel: MainViewModel? = null,
     onSelect: () -> Unit,
     onSelectChild: (ListScreenItemWithTag) -> Unit = {},
     onInsertAtItem: () -> Unit,
@@ -1142,6 +1168,25 @@ fun CustomGroupItemBox(
                         val childCalcOffset = childTag?.offset ?: (childParentPacket?.offset ?: 1)
                         val childCombinedBadgeText = if (isBitTagItem) "$tagShortName$childCalcOffset:$bitIndex" else "$tagShortName$childCalcOffset"
 
+                        val childRawDisplayType = childItem.DisplayType.ifEmpty {
+                            DisplayTypes.getOptionsForDataType(
+                                if (isBitTagItem) "B" else packetDataType.shortName.ifEmpty { packetDataType.description }
+                            ).first()
+                        }
+
+                        val childListItems by if (viewModel != null && childTag != null) {
+                            val flow = remember(childTag.id, viewModel) { viewModel.getListItemsForTag(childTag.id) }
+                            flow.collectAsStateWithLifecycle(initialValue = emptyList())
+                        } else remember { mutableStateOf(emptyList()) }
+                        val isChildListDisplayType = childRawDisplayType.contains("List", ignoreCase = true)
+                        val childFormattedVal = if (isChildListDisplayType && childTag != null) {
+                            val numVal = childTag.storedValue.toIntOrNull()
+                            val match = if (numVal != null) childListItems.find { it.number == numVal } else null
+                            match?.label ?: "Undefined"
+                        } else {
+                            childTag?.storedValue ?: "(empty)"
+                        }
+
                         val selectedItemWithTag = (selectedItem as? SelectedListItem.Item)?.itemWithTag
                         val isChildSelected = if (selectedItemWithTag != null) {
                             if (childItem.id > 0 && selectedItemWithTag.item.id > 0) {
@@ -1160,6 +1205,10 @@ fun CustomGroupItemBox(
                             hasChildren = false,
                             badgeText = childCombinedBadgeText,
                             badgeColor = badgeColor,
+                            displayType = childRawDisplayType,
+                            isBitTagItem = isBitTagItem,
+                            isBitSet = false,
+                            storedValue = childFormattedVal,
                             onToggleExpand = {},
                             onSelect = { onSelectChild(childWithTag) },
                             onDelete = { onDeleteItem(childWithTag) }
@@ -1183,6 +1232,7 @@ fun NodeGroupItemBox(
     selectedItem: SelectedListItem? = null,
     screenItems: List<ListScreenItemWithTag> = emptyList(),
     expandedPacketGroups: Map<Long, Boolean> = emptyMap(),
+    expandedTagGroups: Map<Long, Boolean> = emptyMap(),
     viewModel: MainViewModel? = null,
     onSelect: () -> Unit,
     onSelectChild: (ListScreenItemWithTag) -> Unit = {},
@@ -1279,6 +1329,8 @@ fun NodeGroupItemBox(
                             onToggleExpand = { viewModel?.togglePacketGroupExpanded(targetItem.item.id) },
                             selectedItem = selectedItem,
                             screenItems = screenItems,
+                            expandedTagGroups = expandedTagGroups,
+                            viewModel = viewModel,
                             onSelect = { onSelectChild(targetItem) },
                             onSelectChild = onSelectChild,
                             onInsertAtItem = onInsertAtItem,
@@ -1302,6 +1354,8 @@ fun PacketGroupItemBox(
     onToggleExpand: () -> Unit = {},
     selectedItem: SelectedListItem? = null,
     screenItems: List<ListScreenItemWithTag> = emptyList(),
+    expandedTagGroups: Map<Long, Boolean> = emptyMap(),
+    viewModel: MainViewModel? = null,
     onSelect: () -> Unit,
     onSelectChild: (ListScreenItemWithTag) -> Unit = {},
     onInsertAtItem: () -> Unit,
@@ -1417,20 +1471,108 @@ fun PacketGroupItemBox(
 
                         val tagCalcOffset = tag.offset
                         val combinedBadgeText = "$badgeText$tagCalcOffset"
+                        val subItemRawDisplayType = targetItem.item.DisplayType.ifEmpty {
+                            DisplayTypes.getOptionsForDataType(
+                                packetDataType.shortName.ifEmpty { packetDataType.description }
+                            ).first()
+                        }
+
+                        val subItemListItems by if (viewModel != null) {
+                            val flow = remember(tag.id, viewModel) { viewModel.getListItemsForTag(tag.id) }
+                            flow.collectAsStateWithLifecycle(initialValue = emptyList())
+                        } else remember { mutableStateOf(emptyList()) }
+
+                        val isSubItemListDisplayType = subItemRawDisplayType.contains("List", ignoreCase = true)
+                        val subItemFormattedVal = if (isSubItemListDisplayType) {
+                            val numVal = tag.storedValue.toIntOrNull()
+                            val match = if (numVal != null) subItemListItems.find { it.number == numVal } else null
+                            match?.label ?: "Undefined"
+                        } else {
+                            tag.storedValue
+                        }
+
+                        val isTagHasBits = packetDataType.hasBits && targetItem.item.isShowBits
+                        val isTagExpanded = (expandedTagGroups[tag.id] == true) || (targetItem.item.id > 0 && expandedTagGroups[targetItem.item.id] == true)
 
                         ListScreenRow(
                             text = tag.name,
                             subtitle = "Tag #${tag.id} (Val: ${tag.storedValue})",
                             level = 2,
-                            isExpanded = false,
+                            isExpanded = isTagExpanded,
                             isSelected = isTagSelected,
-                            hasChildren = false,
+                            hasChildren = isTagHasBits,
                             badgeText = combinedBadgeText,
                             badgeColor = badgeColor,
-                            onToggleExpand = {},
+                            displayType = subItemRawDisplayType,
+                            isBitTagItem = false,
+                            isBitSet = false,
+                            storedValue = subItemFormattedVal,
+                            onToggleExpand = {
+                                if (isTagHasBits && viewModel != null) {
+                                    val expandKey = if (targetItem.item.id > 0) targetItem.item.id else tag.id
+                                    viewModel.toggleTagGroupExpanded(tag.id)
+                                    viewModel.toggleTagGroupExpanded(expandKey)
+                                }
+                            },
                             onSelect = { onSelectChild(targetItem) },
                             onDelete = null
                         )
+
+                        if (isTagHasBits && isTagExpanded) {
+                            val numBits = packetDataType.bytes * 8
+                            val bitTagsList = tagWithBit.bitTags
+
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 4.dp)
+                            ) {
+                                (0 until numBits).forEach { bitIdx ->
+                                    val bitTagObj = bitTagsList.find { it.bitIndex == bitIdx }
+                                    val bitName = bitTagObj?.name ?: "${tag.name}-$bitIdx"
+                                    val bitBadgeText = "$badgeText${tag.offset}:$bitIdx"
+
+                                    val matchingBitItem = screenItems.find { it.item.parentTagId == tag.id && it.item.Type == (bitIdx + 1) }
+                                    val targetBitItem = matchingBitItem ?: ListScreenItemWithTag(
+                                        item = ListScreenItems(parentScreenId = screen.id, parentTagId = tag.id, Type = (bitIdx + 1), ScreenIndex = itemWithTag.item.ScreenIndex),
+                                        tag = tag
+                                    )
+
+                                    val isBitSelected = if (selectedItemWithTag != null) {
+                                        if (targetBitItem.item.id > 0 && selectedItemWithTag.item.id > 0) {
+                                            selectedItemWithTag.item.id == targetBitItem.item.id
+                                        } else {
+                                            selectedItemWithTag.item.parentTagId == tag.id && selectedItemWithTag.item.Type == (bitIdx + 1)
+                                        }
+                                    } else false
+
+                                    val bitRawDisplayType = targetBitItem.item.DisplayType.ifEmpty { "Default (Numeric entry)" }
+                                    val parentTagNum = tag.storedValue.toLongOrNull() ?: 0L
+                                    val isBitSetVal = (parentTagNum and (1L shl bitIdx)) != 0L
+
+                                    val isParentReadOnly = targetItem.item.isReadOnly
+                                    val bitEffectiveReadOnly = isParentReadOnly || targetBitItem.item.isReadOnly
+
+                                    ListScreenRow(
+                                        text = bitName,
+                                        subtitle = "Bit $bitIdx of ${tag.name}",
+                                        level = 3,
+                                        isExpanded = false,
+                                        isSelected = isBitSelected,
+                                        hasChildren = false,
+                                        badgeText = bitBadgeText,
+                                        badgeColor = Color(0xFF00BCD4),
+                                        displayType = bitRawDisplayType,
+                                        isBitTagItem = true,
+                                        isReadOnly = bitEffectiveReadOnly,
+                                        isBitSet = isBitSetVal,
+                                        storedValue = if (isBitSetVal) "1" else "0",
+                                        onToggleExpand = {},
+                                        onSelect = { onSelectChild(targetBitItem) },
+                                        onDelete = null
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1561,6 +1703,13 @@ fun TagGroupItemBox(
 
                         val bitName = "$tagName-$bitIdx"
                         val bitBadgeText = "$badgeText${tag?.offset ?: 0}:$bitIdx"
+                        val bitRawDisplayType = targetItem.item.DisplayType.ifEmpty { "Default (Numeric entry)" }
+
+                        val parentTagNum = tag?.storedValue?.toLongOrNull() ?: 0L
+                        val isBitSetVal = (parentTagNum and (1L shl bitIdx)) != 0L
+
+                        val isParentReadOnly = itemWithTag.item.isReadOnly
+                        val bitEffectiveReadOnly = isParentReadOnly || targetItem.item.isReadOnly
 
                         ListScreenRow(
                             text = bitName,
@@ -1571,6 +1720,11 @@ fun TagGroupItemBox(
                             hasChildren = false,
                             badgeText = bitBadgeText,
                             badgeColor = Color(0xFF00BCD4),
+                            displayType = bitRawDisplayType,
+                            isBitTagItem = true,
+                            isReadOnly = bitEffectiveReadOnly,
+                            isBitSet = isBitSetVal,
+                            storedValue = if (isBitSetVal) "1" else "0",
                             onToggleExpand = {},
                             onSelect = { onSelectChild(targetItem) },
                             onDelete = { onDeleteItem() }
@@ -1592,6 +1746,11 @@ fun ListScreenRow(
     hasChildren: Boolean,
     badgeText: String? = null,
     badgeColor: Color? = null,
+    displayType: String? = null,
+    isBitTagItem: Boolean = false,
+    isReadOnly: Boolean = false,
+    isBitSet: Boolean = false,
+    storedValue: String = "",
     offsetText: String? = null,
     onToggleExpand: () -> Unit,
     onSelect: () -> Unit,
@@ -1669,6 +1828,150 @@ fun ListScreenRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Live GUI Control Preview
+            if (isReadOnly) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = "Read Only",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = if (isBitTagItem) (if (isBitSet) "1" else "0") else storedValue,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
+            } else if (isBitTagItem) {
+                when (displayType) {
+                    "On_Button", "Off_Button", "Toggle_Button" -> {
+                        Button(
+                            onClick = {},
+                            enabled = false,
+                            colors = ButtonDefaults.buttonColors(
+                                disabledContainerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFF757575),
+                                disabledContentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(30.dp)
+                        ) {
+                            Text(
+                                text = if (isBitSet) "ON" else "OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "Switch" -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = if (isBitSet) "ON" else "OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isBitSet) Color(0xFF4CAF50) else Color.Gray
+                            )
+                            Switch(
+                                checked = isBitSet,
+                                onCheckedChange = null,
+                                enabled = false
+                            )
+                        }
+                    }
+                    "CheckBox" -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isBitSet,
+                                onCheckedChange = null,
+                                enabled = false
+                            )
+                            Text(
+                                text = if (isBitSet) "ON" else "OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isBitSet) Color(0xFF4CAF50) else Color.Gray
+                            )
+                        }
+                    }
+                    "Radio_Button" -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isBitSet,
+                                onClick = null,
+                                enabled = false
+                            )
+                            Text(
+                                text = if (isBitSet) "ON" else "OFF",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isBitSet) Color(0xFF4CAF50) else Color.Gray
+                            )
+                        }
+                    }
+                    "Default (Numeric entry)", "Default" -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isBitSet) Color(0xFF4CAF50) else MaterialTheme.colorScheme.secondaryContainer,
+                            border = BorderStroke(1.dp, if (isBitSet) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Text(
+                                text = if (isBitSet) "1" else "0",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isBitSet) Color.White else MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    else -> {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isBitSet) Color(0xFF4CAF50) else MaterialTheme.colorScheme.secondaryContainer,
+                            border = BorderStroke(1.dp, if (isBitSet) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Text(
+                                text = if (isBitSet) "1" else "0",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isBitSet) Color.White else MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+            } else if (!displayType.isNullOrBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        text = storedValue,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -2085,6 +2388,50 @@ fun ScreenDetailPane(
                     Text("Pick Group Background Color", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
 
+                // Tri-State Read-Only for Custom Group
+                val groupChildItems = screensWithItems
+                    .find { it.screen.id == item.parentScreen.id }
+                    ?.items
+                    ?.filter { it.item.parentCustomGroupId == item.group.id } ?: emptyList()
+
+                val groupTriState = when {
+                    groupChildItems.isEmpty() -> ToggleableState.Off
+                    groupChildItems.all { it.item.isReadOnly } -> ToggleableState.On
+                    groupChildItems.none { it.item.isReadOnly } -> ToggleableState.Off
+                    else -> ToggleableState.Indeterminate
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (groupTriState == ToggleableState.On) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clickable {
+                                val nextState = groupTriState != ToggleableState.On
+                                viewModel.setCustomGroupReadOnly(item.parentScreen.id, item.group.id, nextState)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        TriStateCheckbox(
+                            state = groupTriState,
+                            onClick = null
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text("Group Read Only", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            val subText = when (groupTriState) {
+                                ToggleableState.On -> "All group items are read-only"
+                                ToggleableState.Off -> "All group items are editable"
+                                ToggleableState.Indeterminate -> "Group items set individually"
+                            }
+                            Text(subText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                        }
+                    }
+                }
+
                 if (showColorDialog) {
                     GroupColorPickerDialog(
                         initialColorHex = groupColorHex,
@@ -2102,7 +2449,13 @@ fun ScreenDetailPane(
             val currentItemWithTag = screensWithItems
                 .find { it.screen.id == item.parentScreen.id }
                 ?.items
-                ?.find { it.item.id == item.itemWithTag.item.id }
+                ?.find { screenItem ->
+                    if (item.itemWithTag.item.id > 0) {
+                        screenItem.item.id == item.itemWithTag.item.id
+                    } else {
+                        screenItem.item.parentTagId == item.itemWithTag.item.parentTagId && screenItem.item.Type == item.itemWithTag.item.Type
+                    }
+                }
                 ?: item.itemWithTag
 
             val listItem = currentItemWithTag.item
@@ -2152,6 +2505,17 @@ fun ScreenDetailPane(
             var isReadOnlyState by remember(itemKey, listItem.isReadOnly) {
                 mutableStateOf(listItem.isReadOnly)
             }
+
+            val parentTagItem = if (isBitTagItem && tag != null) {
+                screensWithItems
+                    .find { it.screen.id == item.parentScreen.id }
+                    ?.items
+                    ?.find { it.item.parentTagId == tag.id && it.item.Type == 0 }
+                    ?.item
+            } else null
+
+            val isParentReadOnly = parentTagItem?.isReadOnly == true
+            val isReadOnlyChecked = if (isParentReadOnly) true else isReadOnlyState
             var isTwoTouchState by remember(itemKey, listItem.isTwoTouch) {
                 mutableStateOf(listItem.isTwoTouch)
             }
@@ -2303,6 +2667,107 @@ fun ScreenDetailPane(
                         Text("Current Value: ${tag?.storedValue ?: "(empty)"}")
                         Text("Description: ${tag?.description ?: "-"}")
 
+                        // Tri-State Read-Only for Packet Group
+                        if (isPacketGroup) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            val packetId = (listItem.Type - 1000).toLong()
+                            val packetTags = hierarchy.flatMap { node -> node.packetsWithTags }
+                                .find { p -> p.packet.id == packetId }
+                                ?.tagsWithBitTags?.map { it.tag } ?: emptyList()
+                            val screenPacketItems = screensWithItems
+                                .find { it.screen.id == item.parentScreen.id }
+                                ?.items
+                                ?.filter { screenItem -> packetTags.any { t -> t.id == screenItem.item.parentTagId } } ?: emptyList()
+
+                            val packetTriState = when {
+                                packetTags.isEmpty() -> ToggleableState.Off
+                                screenPacketItems.isNotEmpty() && screenPacketItems.all { it.item.isReadOnly } -> ToggleableState.On
+                                screenPacketItems.none { it.item.isReadOnly } -> ToggleableState.Off
+                                else -> ToggleableState.Indeterminate
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (packetTriState == ToggleableState.On) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clickable {
+                                            val nextState = packetTriState != ToggleableState.On
+                                            viewModel.setPacketGroupReadOnly(item.parentScreen.id, packetId, nextState)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    TriStateCheckbox(
+                                        state = packetTriState,
+                                        onClick = null
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text("Packet Read Only", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                        val subText = when (packetTriState) {
+                                            ToggleableState.On -> "All packet tags are read-only"
+                                            ToggleableState.Off -> "All packet tags are editable"
+                                            ToggleableState.Indeterminate -> "Packet tags set individually"
+                                        }
+                                        Text(subText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Tri-State Read-Only for Node Group
+                        if (isNodeGroup) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                            val nodeId = (listItem.Type - 10000).toLong()
+                            val nodePackets = hierarchy.find { n -> n.node.id == nodeId }?.packetsWithTags ?: emptyList()
+                            val nodeTags = nodePackets.flatMap { it.tagsWithBitTags }.map { it.tag }
+                            val screenNodeItems = screensWithItems
+                                .find { it.screen.id == item.parentScreen.id }
+                                ?.items
+                                ?.filter { screenItem -> nodeTags.any { t -> t.id == screenItem.item.parentTagId } } ?: emptyList()
+
+                            val nodeTriState = when {
+                                nodeTags.isEmpty() -> ToggleableState.Off
+                                screenNodeItems.isNotEmpty() && screenNodeItems.all { it.item.isReadOnly } -> ToggleableState.On
+                                screenNodeItems.none { it.item.isReadOnly } -> ToggleableState.Off
+                                else -> ToggleableState.Indeterminate
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (nodeTriState == ToggleableState.On) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clickable {
+                                            val nextState = nodeTriState != ToggleableState.On
+                                            viewModel.setNodeGroupReadOnly(item.parentScreen.id, nodeId, nextState)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    TriStateCheckbox(
+                                        state = nodeTriState,
+                                        onClick = null
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text("Node Read Only", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                        val subText = when (nodeTriState) {
+                                            ToggleableState.On -> "All node tags are read-only"
+                                            ToggleableState.Off -> "All node tags are editable"
+                                            ToggleableState.Indeterminate -> "Node tags set individually"
+                                        }
+                                        Text(subText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                            }
+                        }
+
                         if (!isNodeGroup && !isPacketGroup) {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -2320,12 +2785,12 @@ fun ScreenDetailPane(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = if (isReadOnlyState) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                                    color = if (isReadOnlyChecked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
-                                            .clickable {
+                                            .clickable(enabled = !isParentReadOnly) {
                                                 val newVal = !isReadOnlyState
                                                 isReadOnlyState = newVal
                                                 viewModel.updateListScreenItem(listItem.copy(isReadOnly = newVal))
@@ -2333,11 +2798,73 @@ fun ScreenDetailPane(
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
                                         Checkbox(
-                                            checked = isReadOnlyState,
-                                            onCheckedChange = null
+                                            checked = isReadOnlyChecked,
+                                            onCheckedChange = null,
+                                            enabled = !isParentReadOnly
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Read Only", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                        Column {
+                                            Text(
+                                                text = "Read Only",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isParentReadOnly) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (isParentReadOnly) {
+                                                Text(
+                                                    text = "(Enforced by parent tag)",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.error
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Tri-State Read-Only for Parent Tag with Sub-Bits
+                                if (!isBitTagItem && packetDataType.hasBits && isShowBitsState && tag != null) {
+                                    val numBits = packetDataType.bytes * 8
+                                    val savedBitItems = screensWithItems
+                                        .find { it.screen.id == item.parentScreen.id }
+                                        ?.items
+                                        ?.filter { it.item.parentTagId == tag.id && it.item.Type in 1..numBits } ?: emptyList()
+
+                                    val isParentRo = listItem.isReadOnly
+                                    val parentTriState = when {
+                                        isParentRo -> ToggleableState.On
+                                        savedBitItems.none { it.item.isReadOnly } -> ToggleableState.Off
+                                        savedBitItems.all { it.item.isReadOnly } -> ToggleableState.On
+                                        else -> ToggleableState.Indeterminate
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (parentTriState == ToggleableState.On) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    val nextState = parentTriState != ToggleableState.On
+                                                    viewModel.setParentTagAndBitsReadOnly(item.parentScreen.id, tag.id, numBits, nextState)
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            TriStateCheckbox(
+                                                state = parentTriState,
+                                                onClick = null
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Column {
+                                                Text("All Bits Read Only", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                                val subText = when (parentTriState) {
+                                                    ToggleableState.On -> "Parent tag & all bits read-only"
+                                                    ToggleableState.Off -> "Parent tag & all bits editable"
+                                                    ToggleableState.Indeterminate -> "Bits set individually"
+                                                }
+                                                Text(subText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                            }
+                                        }
                                     }
                                 }
 

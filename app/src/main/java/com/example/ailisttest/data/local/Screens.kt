@@ -12,8 +12,13 @@ data class Screens(
     @PrimaryKey(autoGenerate = true)
     var id: Long = 0,
     @ColumnInfo var Name: String = "",
-    @ColumnInfo var Type: Int = 0
-)
+    @ColumnInfo var Type: Int = TYPE_LIST
+) {
+    companion object {
+        const val TYPE_LIST = 1
+        const val TYPE_GRAPHICS = 2
+    }
+}
 
 @Entity(
     tableName = "CustomGroup",
@@ -103,4 +108,57 @@ data class ScreenWithListItems(
         entityColumn = "parentScreenId"
     )
     val items: List<ListScreenItemWithTag>
+)
+
+@Entity(
+    tableName = "GraphicsScreenItems",
+    foreignKeys = [
+        ForeignKey(
+            entity = Screens::class,
+            parentColumns = ["id"],
+            childColumns = ["parentScreenId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = TagEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["parentTagId"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ]
+)
+data class GraphicsScreenItems(
+    @PrimaryKey(autoGenerate = true)
+    var id: Long = 0,
+    @ColumnInfo(name = "parentScreenId") var parentScreenId: Long = 0,
+    @ColumnInfo(name = "parentCustomGroupId") var parentCustomGroupId: Long? = null,
+    @ColumnInfo(name = "parentTagId") var parentTagId: Long? = null,
+    @ColumnInfo(name = "DisplayTypeId") var DisplayType: String = "",
+    @ColumnInfo var Type: Int = 0,
+    @ColumnInfo var OffsetX: Float = 0f,
+    @ColumnInfo var OffsetY: Float = 0f,
+    @ColumnInfo var Width: Float = 0f,
+    @ColumnInfo var Height: Float = 0f,
+    @ColumnInfo(name = "isReadOnly") var isReadOnly: Boolean = true,
+    @ColumnInfo(name = "isTwoTouch") var isTwoTouch: Boolean = true,
+    @ColumnInfo(name = "ShowBits") var isShowBits: Boolean = false
+)
+
+data class GraphicsScreenItemWithTag(
+    @Embedded val item: GraphicsScreenItems,
+    @Relation(
+        parentColumn = "parentTagId",
+        entityColumn = "id"
+    )
+    val tag: TagEntity?
+)
+
+data class ScreenWithGraphicsItems(
+    @Embedded val screen: Screens,
+    @Relation(
+        entity = GraphicsScreenItems::class,
+        parentColumn = "id",
+        entityColumn = "parentScreenId"
+    )
+    val items: List<GraphicsScreenItemWithTag>
 )

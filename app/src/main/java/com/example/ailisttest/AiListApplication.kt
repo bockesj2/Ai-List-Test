@@ -17,6 +17,7 @@ class AiListApplication : Application() {
             database.bitTagDao(),
             database.screensDao(),
             database.listScreenItemsDao(),
+            database.graphicsScreenItemsDao(),
             database.customGroupDao(),
             database.headerItemDao(),
             database.tagListItemDao(),

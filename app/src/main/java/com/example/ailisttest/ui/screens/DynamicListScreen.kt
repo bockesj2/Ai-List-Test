@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ailisttest.data.local.TagListItems
 import com.example.ailisttest.data.local.BitTags
 import com.example.ailisttest.data.local.CustomGroup
 import com.example.ailisttest.data.local.DataTypes
@@ -454,6 +455,7 @@ fun DynamicTreeList(
                         dataTypes = dataTypes,
                         statsMap = statsMap,
                         viewModel = viewModel,
+                        screenItems = screenWithItems.items,
                         isSelected = isSelected,
                         onSelect = { onItemSelected(itemWithTag) },
                         onShowSnackbar = onShowSnackbar
@@ -478,8 +480,9 @@ fun DynamicTagWithBitExpandableRow(
     dataTypes: List<DataTypes>,
     statsMap: Map<Long, PacketPollingStats>,
     viewModel: MainViewModel,
+    screenItems: List<ListScreenItemWithTag> = emptyList(),
     isSelected: Boolean,
-    onSelect: () -> Unit,
+    onSelect: (ListScreenItemWithTag) -> Unit = {},
     onShowSnackbar: (String) -> Unit = {}
 ) {
     val isBitTagItem = item.Type > 0 && item.Type < 1000
@@ -598,6 +601,7 @@ fun DynamicTagWithBitExpandableRow(
                         isTwoTouch = item.isTwoTouch,
                         isBitTagItem = isBitTagItem,
                         isBitSet = isBitSet,
+                        tagListItems = tagListItems,
                         onBitAction = { targetState, toggle ->
                             viewModel.updateBitValueAndWrite(
                                 item = item,
@@ -605,6 +609,9 @@ fun DynamicTagWithBitExpandableRow(
                                 toggle = toggle,
                                 onShowSnackbar = onShowSnackbar
                             )
+                        },
+                        onTagValueSelected = { newVal ->
+                            viewModel.updateTagValueAndWrite(tag, newVal, onShowSnackbar)
                         },
                         onLiveDataClicked = {
                             handler.onItemClicked(fieldContext)
@@ -614,10 +621,10 @@ fun DynamicTagWithBitExpandableRow(
                         hasChildren = true,
                         isExpanded = isTagGroupExpanded,
                         onToggleExpand = { viewModel.toggleLiveTagGroupExpanded(item.id) },
-                        onSelect = onSelect
+                        onSelect = { onSelect(itemWithTag) }
                     )
 
-                    if (isTagGroupExpanded) {
+                    if (isTagGroupExpanded && tag != null) {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                         Column(
@@ -625,50 +632,64 @@ fun DynamicTagWithBitExpandableRow(
                             modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 4.dp, end = 8.dp)
                         ) {
                             bitTagsList.forEach { bitTag ->
-                                val isBitSetVal = (parentTagNum and (1L shl bitTag.bitIndex)) != 0L
-                                val bitValueText = if (isBitSetVal) "1" else "0"
-                                val bitBadgeColor = if (isBitSetVal) Color(0xFF4CAF50) else Color.Gray
+                                val bitIdx = bitTag.bitIndex
+                                val isBitSetVal = (parentTagNum and (1L shl bitIdx)) != 0L
 
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 2.dp, horizontal = 4.dp)
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = Color(0xFF00BCD4),
-                                        modifier = Modifier.padding(end = 6.dp)
-                                    ) {
-                                        Text(
-                                            text = "$tagShortName$calcOffset:${bitTag.bitIndex}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                val matchingBitItem = screenItems.find { it.item.parentTagId == tag.id && it.item.Type == (bitIdx + 1) }
+                                val actualBitItem = matchingBitItem?.item ?: ListScreenItems(
+                                    parentScreenId = item.parentScreenId,
+                                    parentTagId = tag.id,
+                                    Type = (bitIdx + 1),
+                                    ScreenIndex = item.ScreenIndex
+                                )
+                                val actualBitItemWithTag = matchingBitItem ?: ListScreenItemWithTag(item = actualBitItem, tag = tag)
+
+                                val bitRawDisplayType = actualBitItem.DisplayType.ifEmpty { "Default (Numeric entry)" }
+                                val bitEffectiveReadOnly = item.isReadOnly || actualBitItem.isReadOnly
+
+                                val bitFieldContext = LiveDataFieldContext(
+                                    item = actualBitItem,
+                                    tag = tag,
+                                    isBitTagItem = true,
+                                    bitIndex = bitIdx,
+                                    isBitSet = isBitSetVal,
+                                    isReadOnly = bitEffectiveReadOnly,
+                                    isTwoTouch = actualBitItem.isTwoTouch,
+                                    viewModel = viewModel,
+                                    onShowPopup = {},
+                                    onShowSnackbar = onShowSnackbar
+                                )
+
+                                val bitHandler = DisplayTypes.getHandler("B", bitRawDisplayType)
+
+                                DynamicItemRow(
+                                    title = bitTag.name,
+                                    badgeText = "$tagShortName$calcOffset:$bitIdx",
+                                    badgeColor = Color(0xFF00BCD4),
+                                    storedValue = if (isBitSetVal) "1" else "0",
+                                    displayType = bitRawDisplayType,
+                                    isReadOnly = bitEffectiveReadOnly,
+                                    isTwoTouch = actualBitItem.isTwoTouch,
+                                    isBitTagItem = true,
+                                    isBitSet = isBitSetVal,
+                                    onBitAction = { targetState, toggle ->
+                                        viewModel.updateBitValueAndWrite(
+                                            item = actualBitItem,
+                                            targetState = targetState,
+                                            toggle = toggle,
+                                            onShowSnackbar = onShowSnackbar
                                         )
-                                    }
-
-                                    Text(
-                                        text = bitTag.name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.weight(1f)
-                                    )
-
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = bitBadgeColor
-                                    ) {
-                                        Text(
-                                            text = bitValueText,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
+                                    },
+                                    onLiveDataClicked = {
+                                        bitHandler.onItemClicked(bitFieldContext)
+                                    },
+                                    stats = packetStats,
+                                    isSelected = false,
+                                    hasChildren = false,
+                                    isExpanded = false,
+                                    onToggleExpand = {},
+                                    onSelect = { onSelect(actualBitItemWithTag) }
+                                )
                             }
                         }
                     }
@@ -701,6 +722,7 @@ fun DynamicTagWithBitExpandableRow(
                 isTwoTouch = item.isTwoTouch,
                 isBitTagItem = isBitTagItem,
                 isBitSet = isBitSet,
+                tagListItems = tagListItems,
                 onBitAction = { targetState, toggle ->
                     viewModel.updateBitValueAndWrite(
                         item = item,
@@ -708,6 +730,11 @@ fun DynamicTagWithBitExpandableRow(
                         toggle = toggle,
                         onShowSnackbar = onShowSnackbar
                     )
+                },
+                onTagValueSelected = { newVal ->
+                    if (tag != null) {
+                        viewModel.updateTagValueAndWrite(tag, newVal, onShowSnackbar)
+                    }
                 },
                 onLiveDataClicked = {
                     handler.onItemClicked(fieldContext)
@@ -717,7 +744,7 @@ fun DynamicTagWithBitExpandableRow(
                 hasChildren = false,
                 isExpanded = false,
                 onToggleExpand = {},
-                onSelect = onSelect
+                onSelect = { onSelect(itemWithTag) }
             )
         }
 
@@ -744,7 +771,9 @@ fun DynamicItemRow(
     isTwoTouch: Boolean = true,
     isBitTagItem: Boolean = false,
     isBitSet: Boolean = false,
+    tagListItems: List<TagListItems> = emptyList(),
     onBitAction: (targetState: Boolean?, toggle: Boolean) -> Unit = { _, _ -> },
+    onTagValueSelected: (String) -> Unit = {},
     onLiveDataClicked: () -> Unit = {},
     stats: PacketPollingStats?,
     isSelected: Boolean,
@@ -820,19 +849,31 @@ fun DynamicItemRow(
             // Live Data Field
             if (isBitTagItem) {
                 if (isReadOnly) {
-                    // Read Only Bit Badge
+                    // Read Only Bit Badge (Greyed out with lock icon)
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = if (isBitSet) Color(0xFF81C784) else MaterialTheme.colorScheme.secondaryContainer,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                         modifier = Modifier.clickable(onClick = onLiveDataClicked)
                     ) {
-                        Text(
-                            text = if (isBitSet) "1 (ON)" else "0 (OFF)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isBitSet) Color.White else MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Lock,
+                                contentDescription = "Read Only",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (isBitSet) "1" else "0",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isBitSet) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 } else {
                     // Direct Interaction on Main Screen for BitType Controls
@@ -944,11 +985,11 @@ fun DynamicItemRow(
                                 modifier = Modifier.clickable(onClick = { onBitAction(null, true) })
                             ) {
                                 Text(
-                                    text = if (isBitSet) "1 (ON)" else "0 (OFF)",
+                                    text = if (isBitSet) "1" else "0",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = if (isBitSet) Color.White else MaterialTheme.colorScheme.onSecondaryContainer,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                                 )
                             }
                         }
@@ -956,17 +997,122 @@ fun DynamicItemRow(
                 }
             } else {
                 // Full Tag
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.clickable(onClick = onLiveDataClicked)
-                ) {
-                    Text(
-                        text = storedValue,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+                val isListType = displayType?.contains("List", ignoreCase = true) == true
+
+                if (isListType && tagListItems.isNotEmpty() && !isReadOnly) {
+                    var dropdownExpanded by remember { mutableStateOf(false) }
+
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.clickable { dropdownExpanded = true }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ArrowDropDown,
+                                    contentDescription = "Select List Option",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = storedValue,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false }
+                        ) {
+                            tagListItems.sortedBy { it.number }.forEach { listItem ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text(
+                                                text = listItem.label,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "(${listItem.number})",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.outline
+                                            )
+                                        }
+                                    },
+                                    onClick = {
+                                        dropdownExpanded = false
+                                        onTagValueSelected(listItem.number.toString())
+                                    }
+                                )
+                            }
+                        }
+                    }
+                } else if (isReadOnly) {
+                    // Read-Only Full Tag (Greyed out with lock icon)
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                        modifier = Modifier.clickable(onClick = onLiveDataClicked)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Lock,
+                                contentDescription = "Read Only",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = storedValue,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                } else {
+                    // Editable Full Tag (Vibrant, interactive look with edit icon)
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.clickable(onClick = onLiveDataClicked)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = "Editable",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = storedValue,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1076,6 +1222,7 @@ fun DynamicCustomGroupBox(
                             dataTypes = dataTypes,
                             statsMap = statsMap,
                             viewModel = viewModel,
+                            screenItems = childItems,
                             isSelected = false,
                             onSelect = { onSelectChild(childWithTag) },
                             onShowSnackbar = onShowSnackbar
@@ -1309,6 +1456,7 @@ fun DynamicPacketGroupBox(
                                 dataTypes = dataTypes,
                                 statsMap = if (stats != null) mapOf(packetWithTags.packet.id to stats) else emptyMap(),
                                 viewModel = viewModel,
+                                screenItems = screenItems,
                                 isSelected = false,
                                 onSelect = { onSelectChild(actualItemWithTag) },
                                 onShowSnackbar = onShowSnackbar

@@ -21,6 +21,7 @@ class MainRepository(
     private val bitTagDao: BitTagDao,
     private val screensDao: ScreensDao,
     private val listScreenItemsDao: ListScreenItemsDao,
+    private val graphicsScreenItemsDao: GraphicsScreenItemsDao,
     private val customGroupDao: CustomGroupDao,
     private val headerItemDao: HeaderItemDao,
     private val tagListItemDao: TagListItemDao,
@@ -93,6 +94,27 @@ class MainRepository(
             )
         }
     }
+
+    fun getGraphicsScreensWithItems(): Flow<List<ScreenWithGraphicsItems>> = combine(
+        screensDao.getGraphicsScreensWithItems(),
+        _hierarchyRefresh
+    ) { graphicsScreensWithItems, _ ->
+        val allTags = tagDao.getAllTagsSync()
+        graphicsScreensWithItems.map { screenWithItems ->
+            screenWithItems.copy(
+                items = screenWithItems.items.map { itemWithTag ->
+                    val tagId = itemWithTag.tag?.id ?: itemWithTag.item.parentTagId
+                    val freshTag = if (tagId != null) allTags.find { it.id == tagId } else itemWithTag.tag
+                    itemWithTag.copy(tag = freshTag ?: itemWithTag.tag)
+                }
+            )
+        }
+    }
+
+    suspend fun getGraphicsScreenItemsForScreenSync(screenId: Long): List<GraphicsScreenItems> = graphicsScreenItemsDao.getItemsForScreenSync(screenId)
+    suspend fun insertGraphicsScreenItem(item: GraphicsScreenItems): Long = graphicsScreenItemsDao.insertItem(item)
+    suspend fun updateGraphicsScreenItem(item: GraphicsScreenItems) = graphicsScreenItemsDao.updateItem(item)
+    suspend fun deleteGraphicsScreenItem(item: GraphicsScreenItems) = graphicsScreenItemsDao.deleteItem(item)
     suspend fun insertScreen(screen: Screens): Long = screensDao.insertScreen(screen)
     suspend fun updateScreen(screen: Screens) = screensDao.updateScreen(screen)
     suspend fun deleteScreen(screen: Screens) = screensDao.deleteScreen(screen)

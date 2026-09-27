@@ -30,4 +30,7 @@ sealed interface AppNavKey : NavKey {
 
     @Serializable
     data class DynamicListScreen(val screenId: Long) : AppNavKey
+
+    @Serializable
+    data class DynamicGraphicsScreen(val screenId: Long) : AppNavKey
 }

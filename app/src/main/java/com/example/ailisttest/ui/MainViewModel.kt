@@ -409,6 +409,9 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
     val listScreensWithItems: StateFlow<List<ScreenWithListItems>> = repository.getListScreensWithItems()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val graphicsScreensWithItems: StateFlow<List<ScreenWithGraphicsItems>> = repository.getGraphicsScreensWithItems()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val allScreens: StateFlow<List<Screens>> = repository.getAllScreens()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -453,12 +456,21 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
         viewModelScope.launch {
             val allScreens = repository.getAllScreensList()
             val candidateName = generateUniqueScreenName(allScreens)
-            val newType = allScreens.size
 
-            val newId = repository.insertScreen(Screens(Name = candidateName, Type = newType))
-            reindexScreens()
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_LIST))
             _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
-            onShowSnackbar("Created screen '$candidateName'")
+            onShowSnackbar("Created list screen '$candidateName'")
+        }
+    }
+
+    fun addGraphicsScreen(onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList()
+            val candidateName = generateUniqueScreenName(allScreens)
+
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS))
+            _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+            onShowSnackbar("Created graphics screen '$candidateName'")
         }
     }
 
@@ -467,17 +479,9 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
             val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
             val candidateName = generateUniqueScreenName(allScreens)
 
-            val idx = allScreens.indexOfFirst { it.id == targetScreen.id }
-            val insertType = if (idx >= 0) allScreens[idx].Type else allScreens.size
-
-            allScreens.filter { it.Type >= insertType }.forEach { screen ->
-                repository.updateScreen(screen.copy(Type = screen.Type + 1))
-            }
-
-            val newId = repository.insertScreen(Screens(Name = candidateName, Type = insertType))
-            reindexScreens()
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_LIST))
             _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
-            onShowSnackbar("Created screen '$candidateName' above '${targetScreen.Name}'")
+            onShowSnackbar("Created list screen '$candidateName' above '${targetScreen.Name}'")
         }
     }
 
@@ -486,17 +490,50 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
             val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
             val candidateName = generateUniqueScreenName(allScreens)
 
-            val idx = allScreens.indexOfFirst { it.id == targetScreen.id }
-            val insertType = if (idx >= 0) allScreens[idx].Type + 1 else allScreens.size
-
-            allScreens.filter { it.Type >= insertType }.forEach { screen ->
-                repository.updateScreen(screen.copy(Type = screen.Type + 1))
-            }
-
-            val newId = repository.insertScreen(Screens(Name = candidateName, Type = insertType))
-            reindexScreens()
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_LIST))
             _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
-            onShowSnackbar("Created screen '$candidateName' below '${targetScreen.Name}'")
+            onShowSnackbar("Created list screen '$candidateName' below '${targetScreen.Name}'")
+        }
+    }
+
+    fun addGraphicsScreenAbove(targetScreen: Screens, onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
+            val candidateName = generateUniqueScreenName(allScreens)
+
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS))
+            _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+            onShowSnackbar("Created graphics screen '$candidateName' above '${targetScreen.Name}'")
+        }
+    }
+
+    fun addGraphicsScreenBelow(targetScreen: Screens, onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
+            val candidateName = generateUniqueScreenName(allScreens)
+
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS))
+            _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+            onShowSnackbar("Created graphics screen '$candidateName' below '${targetScreen.Name}'")
+        }
+    }
+
+    fun insertGraphicsScreenItem(item: GraphicsScreenItems, onResult: (Long) -> Unit = {}) {
+        viewModelScope.launch {
+            val id = repository.insertGraphicsScreenItem(item)
+            onResult(id)
+        }
+    }
+
+    fun updateGraphicsScreenItem(item: GraphicsScreenItems) {
+        viewModelScope.launch {
+            repository.updateGraphicsScreenItem(item)
+        }
+    }
+
+    fun deleteGraphicsScreenItem(item: GraphicsScreenItems) {
+        viewModelScope.launch {
+            repository.deleteGraphicsScreenItem(item)
         }
     }
 
@@ -693,6 +730,89 @@ data class ListScreenItemSpec(
         parentGroupId: Long? = null
     ) {
         addOrInsertListScreenItems(screenId, listOf(selectedPath), targetIndex, parentGroupId)
+    }
+
+    fun setCustomGroupReadOnly(screenId: Long, groupId: Long, readOnly: Boolean) {
+        viewModelScope.launch {
+            val items = repository.getItemsForScreenSync(screenId).filter { it.parentCustomGroupId == groupId }
+            items.forEach { item ->
+                repository.updateListScreenItem(item.copy(isReadOnly = readOnly))
+            }
+            repository.refreshHierarchy()
+        }
+    }
+
+    fun setPacketGroupReadOnly(screenId: Long, packetId: Long, readOnly: Boolean) {
+        viewModelScope.launch {
+            val hierarchyList = repository.getFullHierarchy().firstOrNull() ?: emptyList()
+            val packetWithTags = hierarchyList.flatMap { it.packetsWithTags }.find { it.packet.id == packetId } ?: return@launch
+            val screenItems = repository.getItemsForScreenSync(screenId)
+
+            packetWithTags.tagsWithBitTags.forEach { tagWithBits ->
+                val tag = tagWithBits.tag
+                val existing = screenItems.find { it.parentTagId == tag.id && it.Type == 0 }
+                if (existing != null) {
+                    repository.updateListScreenItem(existing.copy(isReadOnly = readOnly))
+                } else {
+                    repository.insertListScreenItem(
+                        ListScreenItems(
+                            parentScreenId = screenId,
+                            parentTagId = tag.id,
+                            Type = 0,
+                            isReadOnly = readOnly
+                        )
+                    )
+                }
+            }
+            repository.refreshHierarchy()
+        }
+    }
+
+    fun setNodeGroupReadOnly(screenId: Long, nodeId: Long, readOnly: Boolean) {
+        viewModelScope.launch {
+            val hierarchyList = repository.getFullHierarchy().firstOrNull() ?: emptyList()
+            val nodeWithPackets = hierarchyList.find { it.node.id == nodeId } ?: return@launch
+            nodeWithPackets.packetsWithTags.forEach { packetWithTags ->
+                setPacketGroupReadOnly(screenId, packetWithTags.packet.id, readOnly)
+            }
+        }
+    }
+
+    fun setParentTagAndBitsReadOnly(screenId: Long, tagId: Long, numBits: Int, readOnly: Boolean) {
+        viewModelScope.launch {
+            val screenItems = repository.getItemsForScreenSync(screenId)
+            val parentItem = screenItems.find { it.parentTagId == tagId && it.Type == 0 }
+            if (parentItem != null) {
+                repository.updateListScreenItem(parentItem.copy(isReadOnly = readOnly))
+            } else {
+                repository.insertListScreenItem(
+                    ListScreenItems(
+                        parentScreenId = screenId,
+                        parentTagId = tagId,
+                        Type = 0,
+                        isReadOnly = readOnly
+                    )
+                )
+            }
+
+            for (bitIdx in 0 until numBits) {
+                val bitType = bitIdx + 1
+                val bitItem = screenItems.find { it.parentTagId == tagId && it.Type == bitType }
+                if (bitItem != null) {
+                    repository.updateListScreenItem(bitItem.copy(isReadOnly = readOnly))
+                } else {
+                    repository.insertListScreenItem(
+                        ListScreenItems(
+                            parentScreenId = screenId,
+                            parentTagId = tagId,
+                            Type = bitType,
+                            isReadOnly = readOnly
+                        )
+                    )
+                }
+            }
+            repository.refreshHierarchy()
+        }
     }
 
     fun updateListScreenItem(item: ListScreenItems) {

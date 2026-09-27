@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import com.example.ailisttest.data.*
+import com.example.ailisttest.data.local.Screens
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.ViewList
@@ -45,6 +46,7 @@ import com.example.ailisttest.ui.TagNamePickerDialog
 import com.example.ailisttest.ui.navigation.AppNavKey
 import com.example.ailisttest.ui.screens.ConfigureScreen
 import com.example.ailisttest.ui.screens.DisplayScreen
+import com.example.ailisttest.ui.screens.DynamicGraphicsScreen
 import com.example.ailisttest.ui.screens.DynamicListScreen
 import com.example.ailisttest.ui.screens.DataTypesConfigScreen
 import com.example.ailisttest.ui.screens.GraphicsScreensConfigScreen
@@ -64,14 +66,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             AiListTestTheme {
-                val backStack = rememberNavBackStack(AppNavKey.ListScreens)
+                val backStack = rememberNavBackStack(AppNavKey.GraphicsScreens)
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 val context = LocalContext.current
 
                 val mainViewModel: MainViewModel = viewModel(factory = MainViewModel.Factory)
 
-                val expandedDrawerItems = remember { mutableStateMapOf<String, Boolean>() }
+                val expandedDrawerItems = remember {
+                    mutableStateMapOf(
+                        "Configure" to true,
+                        "Screens" to true
+                    )
+                }
                 var selectedTestItem by remember { mutableStateOf<String?>(null) }
                 var showTagPickerDialog by remember { mutableStateOf(false) }
                 var showRecreateDbDialog by remember { mutableStateOf(false) }
@@ -241,9 +248,12 @@ class MainActivity : ComponentActivity() {
                                                     )
                                                 } else {
                                                     allScreens.forEach { screen ->
-                                                        val screenIcon = if (screen.Type == 0) Icons.AutoMirrored.Rounded.ViewList else Icons.Rounded.Dashboard
-                                                        val isScreenSelected = selectedTestItem == null &&
-                                                            (backStack.lastOrNull() as? AppNavKey.DynamicListScreen)?.screenId == screen.id
+                                                        val isGraphics = screen.Type == Screens.TYPE_GRAPHICS
+                                                        val screenIcon = if (isGraphics) Icons.Rounded.Dashboard else Icons.AutoMirrored.Rounded.ViewList
+                                                        val isScreenSelected = selectedTestItem == null && (
+                                                            if (isGraphics) (backStack.lastOrNull() as? AppNavKey.DynamicGraphicsScreen)?.screenId == screen.id
+                                                            else (backStack.lastOrNull() as? AppNavKey.DynamicListScreen)?.screenId == screen.id
+                                                        )
 
                                                         DrawerTreeItemRow(
                                                             title = screen.Name,
@@ -255,8 +265,14 @@ class MainActivity : ComponentActivity() {
                                                             onClick = {
                                                                 selectedTestItem = null
                                                                 scope.launch { drawerState.close() }
-                                                                if ((backStack.lastOrNull() as? AppNavKey.DynamicListScreen)?.screenId != screen.id) {
-                                                                    backStack.add(AppNavKey.DynamicListScreen(screen.id))
+                                                                if (isGraphics) {
+                                                                    if ((backStack.lastOrNull() as? AppNavKey.DynamicGraphicsScreen)?.screenId != screen.id) {
+                                                                        backStack.add(AppNavKey.DynamicGraphicsScreen(screen.id))
+                                                                    }
+                                                                } else {
+                                                                    if ((backStack.lastOrNull() as? AppNavKey.DynamicListScreen)?.screenId != screen.id) {
+                                                                        backStack.add(AppNavKey.DynamicListScreen(screen.id))
+                                                                    }
                                                                 }
                                                             },
                                                             icon = screenIcon
@@ -606,6 +622,13 @@ class MainActivity : ComponentActivity() {
                             }
                             entry<AppNavKey.DynamicListScreen> { key ->
                                 DynamicListScreen(
+                                    screenId = key.screenId,
+                                    viewModel = mainViewModel,
+                                    onOpenDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
+                            entry<AppNavKey.DynamicGraphicsScreen> { key ->
+                                DynamicGraphicsScreen(
                                     screenId = key.screenId,
                                     viewModel = mainViewModel,
                                     onOpenDrawer = { scope.launch { drawerState.open() } }
