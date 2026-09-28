@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GraphicsScreenItems::class,
         TagListItems::class
     ],
-    version = 31,
+    version = 34,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

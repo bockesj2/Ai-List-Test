@@ -1,8 +1,9 @@
 package com.example.ailisttest.ui.screens
 
-import androidx.compose.foundation.BorderStroke
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.Menu
@@ -10,10 +11,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ailisttest.data.GraphicsImageManager
 import com.example.ailisttest.ui.MainViewModel
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,7 +35,36 @@ fun DynamicGraphicsScreen(
     val screenWithItems = remember(graphicsScreensWithItems, screenId) {
         graphicsScreensWithItems.find { it.screen.id == screenId }
     }
-    val screenName = screenWithItems?.screen?.Name ?: "Graphics Screen"
+    val currentScreen = screenWithItems?.screen
+    val screenName = currentScreen?.Name ?: "Graphics Screen"
+    val itemsList = remember(screenWithItems) {
+        screenWithItems?.items ?: emptyList()
+    }
+
+    val context = LocalContext.current
+    val screenBgFile = remember(currentScreen?.backgroundImage) {
+        if (currentScreen != null && currentScreen.backgroundImage.isNotBlank()) {
+            File(GraphicsImageManager.getGraphicsDirectory(context), currentScreen.backgroundImage)
+        } else null
+    }
+    val screenBgBitmap = remember(screenBgFile?.absolutePath, screenBgFile?.lastModified()) {
+        if (screenBgFile != null && screenBgFile.exists() && screenBgFile.isFile) {
+            try {
+                BitmapFactory.decodeFile(screenBgFile.absolutePath)?.asImageBitmap()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        } else null
+    }
+
+    val parsedScreenBgColor = remember(currentScreen?.backgroundColorHex) {
+        try {
+            Color(android.graphics.Color.parseColor(currentScreen?.backgroundColorHex ?: "#FAFAFA"))
+        } catch (_: Exception) {
+            Color(0xFFFAFAFA)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -40,21 +78,23 @@ fun DynamicGraphicsScreen(
             )
         }
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .padding(innerPadding)
-                .padding(16.dp)
-                .fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .fillMaxSize()
+                .background(parsedScreenBgColor)
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = BorderStroke(2.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) {
+            // Render Stretched Screen Background Image if configured
+            if (currentScreen?.backgroundType == "Image" && screenBgBitmap != null) {
+                Image(
+                    bitmap = screenBgBitmap,
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            if (itemsList.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -79,16 +119,55 @@ fun DynamicGraphicsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Live Graphics Screen Canvas View",
+                            text = "No configured graphics items on this screen.",
                             style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Configured graphics widgets, meters, and live Modbus values will display on this screen.",
-                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                val density = LocalDensity.current
+                itemsList.forEach { itemWithTag ->
+                    val item = itemWithTag.item
+                    val tag = itemWithTag.tag
+
+                    if (item.DisplayType.isNotEmpty() && item.DisplayType != "Rectangle") {
+                        val widthDp = with(density) { item.Width.toDp() }
+                        val heightDp = with(density) { item.Height.toDp() }
+
+                        GraphicsItemWidget(
+                            item = item,
+                            tag = tag,
+                            onBitAction = { bitVal, isToggle ->
+                                if (tag != null) {
+                                    if (item.Type in 1..1000) {
+                                        val bitIdx = item.Type - 1
+                                        val currParentVal = tag.storedValue.toLongOrNull() ?: 0L
+                                        val newParentVal = if (isToggle) {
+                                            currParentVal xor (1L shl bitIdx)
+                                        } else if (bitVal != null) {
+                                            if (bitVal) (currParentVal or (1L shl bitIdx)) else (currParentVal and (1L shl bitIdx).inv())
+                                        } else currParentVal
+
+                                        viewModel.updateTagValueAndWrite(tag, newParentVal.toString())
+                                    } else {
+                                        if (isToggle) {
+                                            val currVal = tag.storedValue.toDoubleOrNull()?.toInt() ?: 0
+                                            val newVal = if (currVal == 0) "1" else "0"
+                                            viewModel.updateTagValueAndWrite(tag, newVal)
+                                        } else if (bitVal != null) {
+                                            val newVal = if (bitVal) "1" else "0"
+                                            viewModel.updateTagValueAndWrite(tag, newVal)
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .graphicsLayer {
+                                    translationX = item.OffsetX
+                                    translationY = item.OffsetY
+                                }
+                                .size(width = widthDp, height = heightDp)
                         )
                     }
                 }

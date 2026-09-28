@@ -4,10 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,17 +31,39 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import android.content.Context
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.example.ailisttest.data.GraphicsFileInfo
+import com.example.ailisttest.data.GraphicsImageConfig
+import com.example.ailisttest.data.GraphicsImageManager
+import com.example.ailisttest.ui.GroupColorPickerDialog
+import java.io.File
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ailisttest.data.local.CustomGroup
 import com.example.ailisttest.data.local.DataTypes
@@ -48,7 +72,9 @@ import com.example.ailisttest.data.local.GraphicsScreenItems
 import com.example.ailisttest.data.local.NodeWithPacketsAndTags
 import com.example.ailisttest.data.local.ScreenWithGraphicsItems
 import com.example.ailisttest.data.local.Screens
+import com.example.ailisttest.data.local.TagEntity
 import com.example.ailisttest.ui.MainViewModel
+import com.example.ailisttest.ui.TagNamePickerDialog
 import com.example.ailisttest.ui.components.ScrollMoreDownIndicator
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -75,11 +101,13 @@ fun GraphicsScreensConfigScreen(
 
     // For editing blank canvas screen
     var editingBlankCanvasScreen by remember { mutableStateOf<Screens?>(null) }
+    var initialSelectedItemId by remember { mutableStateOf<Long?>(null) }
     var itemToDelete by remember { mutableStateOf<SelectedGraphicsListItem?>(null) }
     var itemForInfoDialog by remember { mutableStateOf<Pair<GraphicsScreenItemWithTag, Screens>?>(null) }
 
     BackHandler(enabled = editingBlankCanvasScreen != null) {
         editingBlankCanvasScreen = null
+        initialSelectedItemId = null
     }
 
     BackHandler(enabled = editingBlankCanvasScreen == null && navigator.currentDestination?.pane == ListDetailPaneScaffoldRole.Detail) {
@@ -97,8 +125,12 @@ fun GraphicsScreensConfigScreen(
         // Blank Canvas Screen with Selection Rectangles & Layout Editor
         GraphicsBlankEditCanvasScreen(
             screen = editingBlankCanvasScreen!!,
+            initialSelectedItemId = initialSelectedItemId,
             viewModel = viewModel,
-            onBack = { editingBlankCanvasScreen = null }
+            onBack = {
+                editingBlankCanvasScreen = null
+                initialSelectedItemId = null
+            }
         )
     } else {
         Scaffold(
@@ -176,7 +208,13 @@ fun GraphicsScreensConfigScreen(
                                     onItemClick = { screen, itemWithTag ->
                                         itemForInfoDialog = Pair(itemWithTag, screen)
                                     },
+                                    onSelectCanvasItem = { screen, itemWithTag ->
+                                        selectedItem = SelectedGraphicsListItem.Item(itemWithTag, screen)
+                                        initialSelectedItemId = itemWithTag.item.id
+                                        editingBlankCanvasScreen = screen
+                                    },
                                     onEditCanvas = { screen ->
+                                        initialSelectedItemId = null
                                         editingBlankCanvasScreen = screen
                                     },
                                     onDeleteScreen = { screen -> itemToDelete = SelectedGraphicsListItem.Screen(screen) },
@@ -378,6 +416,7 @@ fun GraphicsScreensTreeList(
     selectedItem: SelectedGraphicsListItem?,
     onItemSelected: (SelectedGraphicsListItem) -> Unit,
     onItemClick: (Screens, GraphicsScreenItemWithTag) -> Unit,
+    onSelectCanvasItem: (Screens, GraphicsScreenItemWithTag) -> Unit,
     onEditCanvas: (Screens) -> Unit,
     onDeleteScreen: (Screens) -> Unit,
     onDeleteItem: (Screens, GraphicsScreenItemWithTag) -> Unit
@@ -428,6 +467,9 @@ fun GraphicsScreensTreeList(
                             onSelect = {
                                 onItemSelected(SelectedGraphicsListItem.Item(itemWithTag, screen))
                                 onItemClick(screen, itemWithTag)
+                            },
+                            onSelectCanvasItem = {
+                                onSelectCanvasItem(screen, itemWithTag)
                             },
                             onDelete = { onDeleteItem(screen, itemWithTag) }
                         )
@@ -536,6 +578,7 @@ fun GraphicsScreenItemRow(
     level: Int = 1,
     isSelected: Boolean,
     onSelect: () -> Unit,
+    onSelectCanvasItem: () -> Unit,
     onDelete: () -> Unit
 ) {
     val startIndent = (level * 20).dp
@@ -580,6 +623,23 @@ fun GraphicsScreenItemRow(
                     )
                 }
             }
+
+            // Prominent "Select" Button on the Sub-Item Row
+            FilledTonalButton(
+                onClick = onSelectCanvasItem,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier.height(30.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.CheckCircle,
+                    contentDescription = "Select on Canvas",
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Select", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.width(4.dp))
 
             IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
                 Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
@@ -806,10 +866,14 @@ fun GraphicsScreenDetailPane(
 @Composable
 fun GraphicsBlankEditCanvasScreen(
     screen: Screens,
+    initialSelectedItemId: Long? = null,
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
     val graphicsScreensWithItems by viewModel.graphicsScreensWithItems.collectAsStateWithLifecycle()
+    val allScreens by viewModel.allScreens.collectAsStateWithLifecycle()
+    val hierarchy by viewModel.hierarchy.collectAsStateWithLifecycle()
+    val dataTypes by viewModel.dataTypes.collectAsStateWithLifecycle()
     val screenWithItems = remember(graphicsScreensWithItems, screen.id) {
         graphicsScreensWithItems.find { it.screen.id == screen.id }
     }
@@ -817,7 +881,12 @@ fun GraphicsBlankEditCanvasScreen(
         screenWithItems?.items?.map { it.item } ?: emptyList()
     }
 
-    var activeItemId by remember { mutableStateOf<Long?>(null) }
+    // Pan & Zoom Scale States
+    var scale by remember { mutableFloatStateOf(1f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var isPanMode by remember { mutableStateOf(false) } // False = Edit/Draw Mode, True = Pan Mode
+
+    var activeItemId by remember(screen.id, initialSelectedItemId) { mutableStateOf<Long?>(initialSelectedItemId) }
     var debugItemForDialog by remember { mutableStateOf<GraphicsScreenItems?>(null) }
 
     // Transient in-memory rectangle during active dragging for instant 60/120 FPS responsiveness
@@ -830,6 +899,7 @@ fun GraphicsBlankEditCanvasScreen(
 
     // Active item moving/resizing drag gesture states
     var isMovingActiveItem by remember { mutableStateOf(false) }
+    var isPanningCanvas by remember { mutableStateOf(false) }
     var activeGripIndex by remember { mutableIntStateOf(-1) } // 0: TL, 1: TR, 2: BL, 3: BR
     var activeItemStartRect by remember { mutableStateOf<GraphicsScreenItems?>(null) }
     var touchOffsetInRect by remember { mutableStateOf(Offset.Zero) }
@@ -857,13 +927,50 @@ fun GraphicsBlankEditCanvasScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
+    var showScreenConfigDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val activeScreen = screenWithItems?.screen ?: screen
+
+    val screenBgFile = remember(activeScreen.backgroundImage) {
+        if (activeScreen.backgroundImage.isNotBlank()) {
+            File(GraphicsImageManager.getGraphicsDirectory(context), activeScreen.backgroundImage)
+        } else null
+    }
+    val screenBgBitmap = remember(screenBgFile?.absolutePath, screenBgFile?.lastModified()) {
+        if (screenBgFile != null && screenBgFile.exists() && screenBgFile.isFile) {
+            try {
+                BitmapFactory.decodeFile(screenBgFile.absolutePath)?.asImageBitmap()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        } else null
+    }
+
+    val parsedScreenBgColor = remember(activeScreen.backgroundColorHex) {
+        try {
+            Color(android.graphics.Color.parseColor(activeScreen.backgroundColorHex.ifBlank { "#FAFAFA" }))
+        } catch (_: Exception) {
+            Color(0xFFFAFAFA)
+        }
+    }
+
+    // Helper to map Screen Touch Offset -> Canvas Model Coordinates
+    fun toModelOffset(screenOffset: Offset): Offset {
+        return Offset(
+            x = (screenOffset.x - panOffset.x) / scale,
+            y = (screenOffset.y - panOffset.y) / scale
+        )
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text(screen.Name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(activeScreen.Name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         Text("Canvas Layout Editor — ${itemsList.size} item(s)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
@@ -873,6 +980,46 @@ fun GraphicsBlankEditCanvasScreen(
                     }
                 },
                 actions = {
+                    // Configure Screen Background Button
+                    OutlinedButton(
+                        onClick = { showScreenConfigDialog = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(Icons.Rounded.Settings, contentDescription = "Configure Screen", modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Configure", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    // Zoom Level Indicator & Reset View Button
+                    FilledTonalButton(
+                        onClick = {
+                            scale = 1f
+                            panOffset = Offset.Zero
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(Icons.Rounded.ZoomIn, contentDescription = "Zoom", modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("${(scale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
+                    // Mode Toggle (Pan Mode vs Edit Mode)
+                    IconButton(
+                        onClick = { isPanMode = !isPanMode }
+                    ) {
+                        Icon(
+                            imageVector = if (isPanMode) Icons.Rounded.PanTool else Icons.Rounded.CropSquare,
+                            contentDescription = if (isPanMode) "Pan Mode Active" else "Select/Draw Mode Active",
+                            tint = if (isPanMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
                     TextButton(onClick = onBack) {
                         Text("Done", fontWeight = FontWeight.Bold)
                     }
@@ -884,35 +1031,73 @@ fun GraphicsBlankEditCanvasScreen(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .background(Color(0xFFFAFAFA))
+                .background(parsedScreenBgColor)
+                // 1. Pinch-To-Zoom & Two-Finger Pan Gesture Detector
                 .pointerInput(screen.id) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        val oldScale = scale
+                        val newScale = (scale * zoom).coerceIn(0.2f, 5.0f)
+                        panOffset = (panOffset + pan - centroid) * (newScale / oldScale) + centroid
+                        scale = newScale
+                    }
+                }
+                // 2. Click, Double-Click & Long-Press Tap Gesture Detector (in Model Space)
+                .pointerInput(screen.id, panOffset, scale) {
                     detectTapGestures(
-                        onTap = { tapOffset ->
-                            // Short click/tap: Select item (show grips & blinking border)
+                        onTap = { screenTapOffset ->
+                            val modelTap = toModelOffset(screenTapOffset)
+
+                            // Short click/tap: Select item or bring up configuration dialog if already selected
                             val clickedItem = currentItemsList.findLast { item ->
                                 val upperLeftX = item.OffsetX
                                 val upperLeftY = item.OffsetY
                                 val lowerRightX = item.OffsetX + item.Width
                                 val lowerRightY = item.OffsetY + item.Height
 
-                                tapOffset.x in upperLeftX..lowerRightX && tapOffset.y in upperLeftY..lowerRightY
+                                modelTap.x in upperLeftX..lowerRightX && modelTap.y in upperLeftY..lowerRightY
                             }
 
                             if (clickedItem != null) {
-                                activeItemId = clickedItem.id
+                                if (activeItemId == clickedItem.id) {
+                                    // Single click on an already selected item -> Bring up Item Configuration dialog
+                                    debugItemForDialog = clickedItem
+                                } else {
+                                    // Single click on an unselected item -> Select item (show grips & blinking border)
+                                    activeItemId = clickedItem.id
+                                }
                             } else {
                                 activeItemId = null
                             }
                         },
-                        onLongPress = { touchOffset ->
-                            // Long-press: Bring up the Item Info Popup Dialog Box!
+                        onDoubleTap = { screenTouchOffset ->
+                            val modelTouch = toModelOffset(screenTouchOffset)
+
+                            // Double-click: Bring up the Item Configuration Dialog Box!
+                            val doubleTappedItem = currentItemsList.findLast { item ->
+                                val upperLeftX = item.OffsetX
+                                val upperLeftY = item.OffsetY
+                                val lowerRightX = item.OffsetX + item.Width
+                                val lowerRightY = item.OffsetY + item.Height
+
+                                modelTouch.x in upperLeftX..lowerRightX && modelTouch.y in upperLeftY..lowerRightY
+                            }
+
+                            if (doubleTappedItem != null) {
+                                activeItemId = doubleTappedItem.id
+                                debugItemForDialog = doubleTappedItem
+                            }
+                        },
+                        onLongPress = { screenTouchOffset ->
+                            val modelTouch = toModelOffset(screenTouchOffset)
+
+                            // Long-press: Bring up the Item Configuration Dialog Box!
                             val longPressedItem = currentItemsList.findLast { item ->
                                 val upperLeftX = item.OffsetX
                                 val upperLeftY = item.OffsetY
                                 val lowerRightX = item.OffsetX + item.Width
                                 val lowerRightY = item.OffsetY + item.Height
 
-                                touchOffset.x in upperLeftX..lowerRightX && touchOffset.y in upperLeftY..lowerRightY
+                                modelTouch.x in upperLeftX..lowerRightX && modelTouch.y in upperLeftY..lowerRightY
                             }
 
                             if (longPressedItem != null) {
@@ -922,18 +1107,20 @@ fun GraphicsBlankEditCanvasScreen(
                         }
                     )
                 }
-                .pointerInput(screen.id) {
+                // 3. Drag Gesture Detector (Resizing Grips, Moving Items, Drawing Rectangles & Background Pan)
+                .pointerInput(screen.id, panOffset, scale, isPanMode) {
                     detectDragGestures(
-                        onDragStart = { startOffset ->
+                        onDragStart = { screenStartOffset ->
                             hasDraggedSinceTouch = false
+                            val modelStart = toModelOffset(screenStartOffset)
                             val active = draggingRectOverride ?: currentActiveItemFromDb
 
-                            if (active != null) {
+                            if (!isPanMode && active != null) {
                                 val left = active.OffsetX
                                 val top = active.OffsetY
                                 val right = active.OffsetX + active.Width
                                 val bottom = active.OffsetY + active.Height
-                                val gripRadius = 32.dp.toPx()
+                                val gripRadiusInModel = 32.dp.toPx() / scale
 
                                 val tlGrip = Offset(left, top)
                                 val trGrip = Offset(right, top)
@@ -941,80 +1128,84 @@ fun GraphicsBlankEditCanvasScreen(
                                 val brGrip = Offset(right, bottom)
 
                                 when {
-                                    (startOffset - tlGrip).getDistance() <= gripRadius -> {
+                                    (modelStart - tlGrip).getDistance() <= gripRadiusInModel -> {
                                         activeGripIndex = 0
                                         activeItemStartRect = active.copy()
                                         draggingRectOverride = active.copy()
-                                        dragStartPoint = startOffset
+                                        dragStartPoint = modelStart
                                         return@detectDragGestures
                                     }
-                                    (startOffset - trGrip).getDistance() <= gripRadius -> {
+                                    (modelStart - trGrip).getDistance() <= gripRadiusInModel -> {
                                         activeGripIndex = 1
                                         activeItemStartRect = active.copy()
                                         draggingRectOverride = active.copy()
-                                        dragStartPoint = startOffset
+                                        dragStartPoint = modelStart
                                         return@detectDragGestures
                                     }
-                                    (startOffset - blGrip).getDistance() <= gripRadius -> {
+                                    (modelStart - blGrip).getDistance() <= gripRadiusInModel -> {
                                         activeGripIndex = 2
                                         activeItemStartRect = active.copy()
                                         draggingRectOverride = active.copy()
-                                        dragStartPoint = startOffset
+                                        dragStartPoint = modelStart
                                         return@detectDragGestures
                                     }
-                                    (startOffset - brGrip).getDistance() <= gripRadius -> {
+                                    (modelStart - brGrip).getDistance() <= gripRadiusInModel -> {
                                         activeGripIndex = 3
                                         activeItemStartRect = active.copy()
                                         draggingRectOverride = active.copy()
-                                        dragStartPoint = startOffset
+                                        dragStartPoint = modelStart
                                         return@detectDragGestures
                                     }
                                 }
 
                                 // Check if touch inside active rectangle body (Moving mode)
-                                if (startOffset.x in left..right && startOffset.y in top..bottom) {
+                                if (modelStart.x in left..right && modelStart.y in top..bottom) {
                                     isMovingActiveItem = true
                                     activeItemStartRect = active.copy()
                                     draggingRectOverride = active.copy()
-                                    touchOffsetInRect = startOffset - Offset(left, top)
-                                    dragStartPoint = startOffset
+                                    touchOffsetInRect = modelStart - Offset(left, top)
+                                    dragStartPoint = modelStart
                                     return@detectDragGestures
                                 }
                             }
 
-                            // Touch outside active rectangle -> check if touch inside any existing item
-                            val clickedExisting = currentItemsList.findLast { item ->
-                                val l = item.OffsetX
-                                val t = item.OffsetY
-                                val r = item.OffsetX + item.Width
-                                val b = item.OffsetY + item.Height
-                                startOffset.x in l..r && startOffset.y in t..b
-                            }
+                            // Check if touch inside any existing item
+                            val clickedExisting = if (!isPanMode) {
+                                currentItemsList.findLast { item ->
+                                    val l = item.OffsetX
+                                    val t = item.OffsetY
+                                    val r = item.OffsetX + item.Width
+                                    val b = item.OffsetY + item.Height
+                                    modelStart.x in l..r && modelStart.y in t..b
+                                }
+                            } else null
 
                             if (clickedExisting != null) {
                                 activeItemId = clickedExisting.id
                                 isMovingActiveItem = true
                                 activeItemStartRect = clickedExisting.copy()
                                 draggingRectOverride = clickedExisting.copy()
-                                touchOffsetInRect = startOffset - Offset(clickedExisting.OffsetX, clickedExisting.OffsetY)
-                                dragStartPoint = startOffset
+                                touchOffsetInRect = modelStart - Offset(clickedExisting.OffsetX, clickedExisting.OffsetY)
+                                dragStartPoint = modelStart
+                            } else if (isPanMode) {
+                                isPanningCanvas = true
                             } else {
-                                // Touch outside all items -> Start creating new selection rectangle
+                                // Touch outside all items in Edit Mode -> Start creating new selection rectangle
                                 activeItemId = null
                                 draggingRectOverride = null
                                 isDrawingNewRect = true
-                                dragStartPoint = startOffset
-                                dragCurrentPoint = startOffset
+                                dragStartPoint = modelStart
+                                dragCurrentPoint = modelStart
                             }
                         },
                         onDrag = { change, dragAmount ->
                             change.consume()
                             hasDraggedSinceTouch = true
-                            val pos = change.position
+                            val modelPos = toModelOffset(change.position)
                             val startRect = activeItemStartRect
 
                             if (activeGripIndex >= 0 && startRect != null) {
-                                // Direct finger-to-corner tracking for grips
+                                // Direct finger-to-corner tracking for grips in model space
                                 val sL = startRect.OffsetX
                                 val sT = startRect.OffsetY
                                 val sR = startRect.OffsetX + startRect.Width
@@ -1027,28 +1218,28 @@ fun GraphicsBlankEditCanvasScreen(
 
                                 when (activeGripIndex) {
                                     0 -> { // Top-Left Grip
-                                        nL = minOf(pos.x, sR - 10f).coerceAtLeast(0f)
-                                        nT = minOf(pos.y, sB - 10f).coerceAtLeast(0f)
+                                        nL = minOf(modelPos.x, sR - 10f).coerceAtLeast(0f)
+                                        nT = minOf(modelPos.y, sB - 10f).coerceAtLeast(0f)
                                         nW = sR - nL
                                         nH = sB - nT
                                     }
                                     1 -> { // Top-Right Grip
-                                        val nR = maxOf(pos.x, sL + 10f)
-                                        nT = minOf(pos.y, sB - 10f).coerceAtLeast(0f)
+                                        val nR = maxOf(modelPos.x, sL + 10f)
+                                        nT = minOf(modelPos.y, sB - 10f).coerceAtLeast(0f)
                                         nW = nR - sL
                                         nH = sB - nT
                                         nL = sL
                                     }
                                     2 -> { // Bottom-Left Grip
-                                        nL = minOf(pos.x, sR - 10f).coerceAtLeast(0f)
-                                        val nB = maxOf(pos.y, sT + 10f)
+                                        nL = minOf(modelPos.x, sR - 10f).coerceAtLeast(0f)
+                                        val nB = maxOf(modelPos.y, sT + 10f)
                                         nW = sR - nL
                                         nH = nB - sT
                                         nT = sT
                                     }
                                     3 -> { // Bottom-Right Grip
-                                        val nR = maxOf(pos.x, sL + 10f)
-                                        val nB = maxOf(pos.y, sT + 10f)
+                                        val nR = maxOf(modelPos.x, sL + 10f)
+                                        val nB = maxOf(modelPos.y, sT + 10f)
                                         nW = nR - sL
                                         nH = nB - sT
                                         nL = sL
@@ -1063,16 +1254,18 @@ fun GraphicsBlankEditCanvasScreen(
                                     Height = nH
                                 )
                             } else if (isMovingActiveItem && startRect != null) {
-                                // Direct touch tracking for moving active rectangle
-                                val newL = (pos.x - touchOffsetInRect.x).coerceAtLeast(0f)
-                                val newT = (pos.y - touchOffsetInRect.y).coerceAtLeast(0f)
+                                // Direct touch tracking for moving active rectangle in model space
+                                val newL = (modelPos.x - touchOffsetInRect.x).coerceAtLeast(0f)
+                                val newT = (modelPos.y - touchOffsetInRect.y).coerceAtLeast(0f)
 
                                 draggingRectOverride = startRect.copy(
                                     OffsetX = newL,
                                     OffsetY = newT
                                 )
+                            } else if (isPanningCanvas) {
+                                panOffset += dragAmount
                             } else if (isDrawingNewRect) {
-                                dragCurrentPoint = pos
+                                dragCurrentPoint = modelPos
                             }
                         },
                         onDragEnd = {
@@ -1100,7 +1293,9 @@ fun GraphicsBlankEditCanvasScreen(
                                             Height = height
                                         )
                                         viewModel.insertGraphicsScreenItem(newRect) { newId ->
+                                            val createdItem = newRect.copy(id = newId)
                                             activeItemId = newId
+                                            debugItemForDialog = createdItem
                                         }
                                     }
                                 }
@@ -1110,6 +1305,7 @@ fun GraphicsBlankEditCanvasScreen(
                             draggingRectOverride = null
                             isDrawingNewRect = false
                             isMovingActiveItem = false
+                            isPanningCanvas = false
                             activeGripIndex = -1
                             dragStartPoint = null
                             dragCurrentPoint = null
@@ -1119,6 +1315,7 @@ fun GraphicsBlankEditCanvasScreen(
                             draggingRectOverride = null
                             isDrawingNewRect = false
                             isMovingActiveItem = false
+                            isPanningCanvas = false
                             activeGripIndex = -1
                             dragStartPoint = null
                             dragCurrentPoint = null
@@ -1127,160 +1324,1605 @@ fun GraphicsBlankEditCanvasScreen(
                     )
                 }
         ) {
+            // Screen Background Layer (Always drawn FIRST at bottom layer, non-interactive)
+            if (activeScreen.backgroundType == "Image" && screenBgBitmap != null) {
+                Image(
+                    bitmap = screenBgBitmap,
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val activeId = displayActiveItem?.id
+                withTransform({
+                    translate(panOffset.x, panOffset.y)
+                    scale(scale, scale, pivot = Offset.Zero)
+                }) {
+                    val activeId = displayActiveItem?.id
 
-                // 1. Draw Inactive Selection Rectangles
-                itemsList.filter { it.id != activeId }.forEach { item ->
-                    val rectOffset = Offset(item.OffsetX, item.OffsetY)
-                    val rectSize = Size(item.Width, item.Height)
+                    // 1. Draw Inactive Selection Rectangles (for plain rectangles only)
+                    itemsList.filter { it.id != activeId && (it.DisplayType.isEmpty() || it.DisplayType == "Rectangle") }.forEach { item ->
+                        val rectOffset = Offset(item.OffsetX, item.OffsetY)
+                        val rectSize = Size(item.Width, item.Height)
 
-                    drawRect(
-                        color = Color(0xFF2196F3).copy(alpha = 0.15f),
-                        topLeft = rectOffset,
-                        size = rectSize
-                    )
-                    drawRect(
-                        color = Color(0xFF2196F3),
-                        topLeft = rectOffset,
-                        size = rectSize,
-                        style = Stroke(width = 2.dp.toPx())
-                    )
-                }
-
-                // 2. Draw In-Progress Creation Rectangle
-                if (isDrawingNewRect && dragStartPoint != null && dragCurrentPoint != null) {
-                    val s = dragStartPoint!!
-                    val c = dragCurrentPoint!!
-                    val l = minOf(s.x, c.x)
-                    val t = minOf(s.y, c.y)
-                    val w = abs(c.x - s.x)
-                    val h = abs(c.y - s.y)
-
-                    val rectOffset = Offset(l, t)
-                    val rectSize = Size(w, h)
-
-                    drawRect(
-                        color = Color(0xFFFF9800).copy(alpha = 0.2f),
-                        topLeft = rectOffset,
-                        size = rectSize
-                    )
-                    drawRect(
-                        color = Color(0xFFFF9800),
-                        topLeft = rectOffset,
-                        size = rectSize,
-                        style = Stroke(
-                            width = 2.5.dp.toPx(),
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 12f), 0f)
+                        drawRect(
+                            color = Color(0xFF2196F3).copy(alpha = 0.15f),
+                            topLeft = rectOffset,
+                            size = rectSize
                         )
-                    )
-                }
-
-                // 3. Draw Active Selection Rectangle with Blinking Highlighted Border and Corner Grips
-                displayActiveItem?.let { item ->
-                    val rectOffset = Offset(item.OffsetX, item.OffsetY)
-                    val rectSize = Size(item.Width, item.Height)
-
-                    // Highlighted Blinking Fill & Border
-                    drawRect(
-                        color = Color(0xFFFF3D00).copy(alpha = 0.12f * alphaAnim),
-                        topLeft = rectOffset,
-                        size = rectSize
-                    )
-                    drawRect(
-                        color = Color(0xFFFF3D00).copy(alpha = alphaAnim),
-                        topLeft = rectOffset,
-                        size = rectSize,
-                        style = Stroke(width = 3.5.dp.toPx())
-                    )
-
-                    // Corner Grips (TL, TR, BL, BR)
-                    val left = item.OffsetX
-                    val top = item.OffsetY
-                    val right = item.OffsetX + item.Width
-                    val bottom = item.OffsetY + item.Height
-                    val gripRadius = 8.dp.toPx()
-
-                    val grips = listOf(
-                        Offset(left, top),       // Top-Left
-                        Offset(right, top),      // Top-Right
-                        Offset(left, bottom),    // Bottom-Left
-                        Offset(right, bottom)    // Bottom-Right
-                    )
-
-                    grips.forEach { gripOffset ->
-                        drawCircle(
-                            color = Color.White,
-                            radius = gripRadius + 3.dp.toPx(),
-                            center = gripOffset
-                        )
-                        drawCircle(
-                            color = Color(0xFFFF3D00),
-                            radius = gripRadius,
-                            center = gripOffset
+                        drawRect(
+                            color = Color(0xFF2196F3),
+                            topLeft = rectOffset,
+                            size = rectSize,
+                            style = Stroke(width = 2.dp.toPx() / scale)
                         )
                     }
+
+                    // 2. Draw In-Progress Creation Rectangle
+                    if (isDrawingNewRect && dragStartPoint != null && dragCurrentPoint != null) {
+                        val s = dragStartPoint!!
+                        val c = dragCurrentPoint!!
+                        val l = minOf(s.x, c.x)
+                        val t = minOf(s.y, c.y)
+                        val w = abs(c.x - s.x)
+                        val h = abs(c.y - s.y)
+
+                        val rectOffset = Offset(l, t)
+                        val rectSize = Size(w, h)
+
+                        drawRect(
+                            color = Color(0xFFFF9800).copy(alpha = 0.2f),
+                            topLeft = rectOffset,
+                            size = rectSize
+                        )
+                        drawRect(
+                            color = Color(0xFFFF9800),
+                            topLeft = rectOffset,
+                            size = rectSize,
+                            style = Stroke(
+                                width = 2.5.dp.toPx() / scale,
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f / scale, 12f / scale), 0f)
+                            )
+                        )
+                    }
+
+                    // 3. Draw Active Selection Rectangle with Blinking Highlighted Border and Corner Grips
+                    displayActiveItem?.let { item ->
+                        val rectOffset = Offset(item.OffsetX, item.OffsetY)
+                        val rectSize = Size(item.Width, item.Height)
+
+                        // Highlighted Blinking Fill & Border
+                        drawRect(
+                            color = Color(0xFFFF3D00).copy(alpha = 0.12f * alphaAnim),
+                            topLeft = rectOffset,
+                            size = rectSize
+                        )
+                        drawRect(
+                            color = Color(0xFFFF3D00).copy(alpha = alphaAnim),
+                            topLeft = rectOffset,
+                            size = rectSize,
+                            style = Stroke(width = 3.5.dp.toPx() / scale)
+                        )
+
+                        // Corner Grips (TL, TR, BL, BR)
+                        val left = item.OffsetX
+                        val top = item.OffsetY
+                        val right = item.OffsetX + item.Width
+                        val bottom = item.OffsetY + item.Height
+                        val gripRadius = 8.dp.toPx() / scale
+
+                        val grips = listOf(
+                            Offset(left, top),       // Top-Left
+                            Offset(right, top),      // Top-Right
+                            Offset(left, bottom),    // Bottom-Left
+                            Offset(right, bottom)    // Bottom-Right
+                        )
+
+                        grips.forEach { gripOffset ->
+                            drawCircle(
+                                color = Color.White,
+                                radius = gripRadius + (3.dp.toPx() / scale),
+                                center = gripOffset
+                            )
+                            drawCircle(
+                                color = Color(0xFFFF3D00),
+                                radius = gripRadius,
+                                center = gripOffset
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Overlay Fitted GUI Controls on Canvas for Configured Items
+            val density = LocalDensity.current
+            screenWithItems?.items?.forEach { itemWithTag ->
+                val item = itemWithTag.item
+                val displayItem = if (item.id == displayActiveItem?.id) (displayActiveItem ?: item) else item
+
+                if (displayItem.DisplayType.isNotEmpty() && displayItem.DisplayType != "Rectangle") {
+                    val widthDp = with(density) { displayItem.Width.toDp() }
+                    val heightDp = with(density) { displayItem.Height.toDp() }
+
+                    val imgConfig = GraphicsImageConfig.fromString(displayItem.configStr)
+                    val oxTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.offsetXTagId }?.tag
+                    val oyTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.offsetYTagId }?.tag
+                    val rotTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.rotationTagId }?.tag
+
+                    val extraX = oxTag?.storedValue?.toFloatOrNull() ?: 0f
+                    val extraY = oyTag?.storedValue?.toFloatOrNull() ?: 0f
+                    val rotDeg = rotTag?.storedValue?.toFloatOrNull() ?: 0f
+
+                    GraphicsItemWidget(
+                        item = displayItem,
+                        tag = itemWithTag.tag,
+                        allScreens = allScreens,
+                        hierarchy = hierarchy,
+                        enabled = false,
+                        onShowSnackbar = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+                        modifier = Modifier
+                            .graphicsLayer {
+                                translationX = (displayItem.OffsetX + extraX) * scale + panOffset.x
+                                translationY = (displayItem.OffsetY + extraY) * scale + panOffset.y
+                                rotationZ = rotDeg
+                                scaleX = scale
+                                scaleY = scale
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                            }
+                            .size(width = widthDp, height = heightDp)
+                    )
                 }
             }
         }
     }
 
-    // Debug Popup Dialog Box (When clicking inside active rectangle)
+    // Screen Config Dialog Box
+    if (showScreenConfigDialog) {
+        ScreenConfigDialog(
+            screen = activeScreen,
+            context = context,
+            screenWidthPx = 1080,
+            screenHeightPx = 1920,
+            onDismiss = { showScreenConfigDialog = false },
+            onSave = { updatedScreen ->
+                viewModel.updateScreen(updatedScreen)
+                showScreenConfigDialog = false
+            }
+        )
+    }
+
+    // Item Config Dialog Box
     debugItemForDialog?.let { dialogItem ->
-        AlertDialog(
-            onDismissRequest = { debugItemForDialog = null },
-            title = { Text("Selection Rectangle Debug Info") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.fillMaxWidth()
+        GraphicsItemConfigDialog(
+            dialogItem = dialogItem,
+            currentScreenId = activeScreen.id,
+            allScreens = allScreens,
+            hierarchy = hierarchy,
+            dataTypes = dataTypes,
+            viewModel = viewModel,
+            onDismiss = { debugItemForDialog = null },
+            onSave = { updatedItem ->
+                viewModel.updateGraphicsScreenItem(updatedItem)
+                debugItemForDialog = null
+            },
+            onDelete = { deletedItem ->
+                viewModel.deleteGraphicsScreenItem(deletedItem)
+                if (activeItemId == deletedItem.id) activeItemId = null
+                debugItemForDialog = null
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GraphicsItemConfigDialog(
+    dialogItem: GraphicsScreenItems,
+    currentScreenId: Long,
+    allScreens: List<Screens>,
+    hierarchy: List<NodeWithPacketsAndTags>,
+    dataTypes: List<DataTypes>,
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit,
+    onSave: (GraphicsScreenItems) -> Unit,
+    onDelete: (GraphicsScreenItems) -> Unit
+) {
+    var showTagPicker by remember { mutableStateOf(false) }
+
+    // Initial Category: Data (default for new items), Graphics, or Other
+    var selectedCategory by remember(dialogItem.id, dialogItem.parentTagId, dialogItem.DisplayType) {
+        val cat = when {
+            dialogItem.DisplayType == "Goto Page Button" || dialogItem.DisplayType == "TBD" -> "Other"
+            dialogItem.DisplayType == "Image" -> "Graphics"
+            else -> "Data"
+        }
+        mutableStateOf(cat)
+    }
+
+    var selectedTagId by remember(dialogItem.id, dialogItem.parentTagId) {
+        mutableStateOf(dialogItem.parentTagId)
+    }
+
+    var selectedItemType by remember(dialogItem.id, dialogItem.Type) {
+        mutableIntStateOf(dialogItem.Type)
+    }
+
+    val imageConfig = remember(dialogItem.id, dialogItem.configStr) {
+        GraphicsImageConfig.fromString(dialogItem.configStr)
+    }
+
+    var selectedConfigStr by remember(dialogItem.id, dialogItem.configStr) {
+        mutableStateOf(imageConfig.fileName)
+    }
+
+    var selectedOffsetXTagId by remember(dialogItem.id, dialogItem.configStr) {
+        mutableStateOf(imageConfig.offsetXTagId)
+    }
+
+    var selectedOffsetYTagId by remember(dialogItem.id, dialogItem.configStr) {
+        mutableStateOf(imageConfig.offsetYTagId)
+    }
+
+    var selectedRotationTagId by remember(dialogItem.id, dialogItem.configStr) {
+        mutableStateOf(imageConfig.rotationTagId)
+    }
+
+    var activeTagPickingTarget by remember { mutableStateOf("itemTag") } // "itemTag", "offsetX", "offsetY", "rotation"
+
+    val offsetXTag = remember(hierarchy, selectedOffsetXTagId) {
+        if (selectedOffsetXTagId != null) {
+            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedOffsetXTagId }?.tag
+        } else null
+    }
+
+    val offsetYTag = remember(hierarchy, selectedOffsetYTagId) {
+        if (selectedOffsetYTagId != null) {
+            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedOffsetYTagId }?.tag
+        } else null
+    }
+
+    val rotationTag = remember(hierarchy, selectedRotationTagId) {
+        if (selectedRotationTagId != null) {
+            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedRotationTagId }?.tag
+        } else null
+    }
+
+    // Available target screens for "Goto Page Button" (excluding current screen)
+    val availableTargetScreens = remember(allScreens, currentScreenId) {
+        allScreens.filter { it.id != currentScreenId }
+    }
+
+    // Currently selected target screen ID for "Goto Page Button" (stored in configStr)
+    var selectedTargetScreenId by remember(dialogItem.id, dialogItem.configStr, availableTargetScreens) {
+        val initialId = dialogItem.configStr.toLongOrNull() ?: availableTargetScreens.firstOrNull()?.id ?: 0L
+        mutableLongStateOf(initialId)
+    }
+
+    // Other options list
+    val otherOptions = listOf("TBD", "Goto Page Button")
+
+    val isBitTag = selectedItemType in 1..1000
+    val bitIndex = if (isBitTag) (selectedItemType - 1) else null
+
+    val selectedTag = remember(hierarchy, selectedTagId) {
+        if (selectedTagId != null) {
+            hierarchy.flatMap { node -> node.packetsWithTags }
+                .flatMap { p -> p.tagsWithBitTags }
+                .find { t -> t.tag.id == selectedTagId }?.tag
+        } else null
+    }
+
+    val displayTagTitle = remember(selectedTag, isBitTag, bitIndex) {
+        when {
+            selectedTag != null && isBitTag && bitIndex != null -> "${selectedTag.name}-$bitIndex"
+            selectedTag != null -> selectedTag.name
+            else -> "(Click to select tag...)"
+        }
+    }
+
+    // Packet data type for options lookup
+    val packetDataType = remember(hierarchy, dataTypes, selectedTag) {
+        if (selectedTag != null) {
+            hierarchy.flatMap { node -> node.packetsWithTags }
+                .find { p -> p.tagsWithBitTags.any { t -> t.tag.id == selectedTag.id } }
+                ?.packet?.type?.let { typeId -> dataTypes.find { dt -> dt.id == typeId.toLong() } }
+                ?: dataTypes.find { it.shortName.equals("DS", ignoreCase = true) || it.dataType.equals("INT", ignoreCase = true) }
+                ?: DataTypes(id = 0, description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true)
+        } else {
+            dataTypes.find { it.shortName.equals("DS", ignoreCase = true) || it.dataType.equals("INT", ignoreCase = true) }
+                ?: DataTypes(id = 0, description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true)
+        }
+    }
+
+    val dataTypeShortName = if (isBitTag) "B" else packetDataType.shortName.ifEmpty { packetDataType.description }
+    val displayOptions = remember(dataTypeShortName, packetDataType) {
+        DisplayTypes.getOptionsForDataType(dataTypeShortName)
+    }
+
+    var selectedDisplayType by remember(dialogItem.id, dialogItem.DisplayType, displayOptions, selectedCategory) {
+        val initial = when (selectedCategory) {
+            "Other" -> if (otherOptions.contains(dialogItem.DisplayType)) dialogItem.DisplayType else "Goto Page Button"
+            "Graphics" -> "Image"
+            else -> if (displayOptions.contains(dialogItem.DisplayType)) dialogItem.DisplayType else displayOptions.firstOrNull() ?: "Default (Numeric entry)"
+        }
+        mutableStateOf(initial)
+    }
+
+    var isShowTagName by remember(dialogItem.id, dialogItem.isShowTagName) {
+        mutableStateOf(dialogItem.isShowTagName)
+    }
+
+    var showImagePickerDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    val openItemImageLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val importedName = GraphicsImageManager.importImageFromUri(context, uri)
+                if (!importedName.isNullOrEmpty()) {
+                    selectedConfigStr = importedName
+                    Toast.makeText(context, "Imported image '$importedName'", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Error importing image: Could not copy file from system URI.", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Error importing image: ${e.localizedMessage ?: e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Item Configuration", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Group Box labeled "Display Type"
+                OutlinedCard(
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            Text("Type: ${dialogItem.DisplayType}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text("Item ID: #${dialogItem.id}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(
+                            text = "Display Type",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { selectedCategory = "Data" }
+                            ) {
+                                RadioButton(
+                                    selected = selectedCategory == "Data",
+                                    onClick = { selectedCategory = "Data" }
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Data", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { selectedCategory = "Graphics" }
+                            ) {
+                                RadioButton(
+                                    selected = selectedCategory == "Graphics",
+                                    onClick = {
+                                        selectedCategory = "Graphics"
+                                        selectedDisplayType = "Image"
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Graphics", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { selectedCategory = "Other" }
+                            ) {
+                                RadioButton(
+                                    selected = selectedCategory == "Other",
+                                    onClick = {
+                                        selectedCategory = "Other"
+                                        selectedDisplayType = "Goto Page Button"
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Other", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (selectedCategory == "Data") {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            // Show Tag Name Checkbox Row
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isShowTagName = !isShowTagName }
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Checkbox(
+                                    checked = isShowTagName,
+                                    onCheckedChange = { isShowTagName = it }
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Show tag name",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Tag Selection Field
+                            Text("Tag", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        activeTagPickingTarget = "itemTag"
+                                        showTagPicker = true
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Sell,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = displayTagTitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (selectedTag != null) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (selectedTag != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Rounded.ArrowDropDown,
+                                        contentDescription = null
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Type Dropdown Listbox
+                            Text("Type", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            var dropdownExpanded by remember { mutableStateOf(false) }
+
+                            ExposedDropdownMenuBox(
+                                expanded = dropdownExpanded,
+                                onExpandedChange = { dropdownExpanded = !dropdownExpanded },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = selectedDisplayType,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = dropdownExpanded,
+                                    onDismissRequest = { dropdownExpanded = false }
+                                ) {
+                                    displayOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = { Text(option) },
+                                            onClick = {
+                                                selectedDisplayType = option
+                                                dropdownExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (selectedCategory == "Other") {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            Text("Type", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            var otherTypeExpanded by remember { mutableStateOf(false) }
+
+                            ExposedDropdownMenuBox(
+                                expanded = otherTypeExpanded,
+                                onExpandedChange = { otherTypeExpanded = !otherTypeExpanded },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = selectedDisplayType,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = otherTypeExpanded) },
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = otherTypeExpanded,
+                                    onDismissRequest = { otherTypeExpanded = false }
+                                ) {
+                                    otherOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = { Text(option) },
+                                            onClick = {
+                                                selectedDisplayType = option
+                                                otherTypeExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (selectedDisplayType == "Goto Page Button") {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text("Target Screen", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                var screenDropdownExpanded by remember { mutableStateOf(false) }
+
+                                val selectedTargetScreen = availableTargetScreens.find { it.id == selectedTargetScreenId }
+                                val targetScreenTitle = if (selectedTargetScreen != null) {
+                                    val typeText = if (selectedTargetScreen.Type == Screens.TYPE_GRAPHICS) "Graphics" else "List"
+                                    "${selectedTargetScreen.Name} ($typeText)"
+                                } else "(No target screen available)"
+
+                                ExposedDropdownMenuBox(
+                                    expanded = screenDropdownExpanded,
+                                    onExpandedChange = { screenDropdownExpanded = !screenDropdownExpanded },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    OutlinedTextField(
+                                        value = targetScreenTitle,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = screenDropdownExpanded) },
+                                        modifier = Modifier
+                                            .menuAnchor()
+                                            .fillMaxWidth()
+                                    )
+                                    ExposedDropdownMenu(
+                                        expanded = screenDropdownExpanded,
+                                        onDismissRequest = { screenDropdownExpanded = false }
+                                    ) {
+                                        availableTargetScreens.forEach { scr ->
+                                            val typeBadge = if (scr.Type == Screens.TYPE_GRAPHICS) "Graphics" else "List"
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                    ) {
+                                                        Text(scr.Name, fontWeight = FontWeight.Bold)
+                                                        Text("($typeBadge)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                                    }
+                                                },
+                                                onClick = {
+                                                    selectedTargetScreenId = scr.id
+                                                    screenDropdownExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (selectedCategory == "Graphics") {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            Text("Graphics Image File", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = if (selectedConfigStr.isNotBlank()) selectedConfigStr else "(No image selected)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (selectedConfigStr.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (selectedConfigStr.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            openItemImageLauncher.launch(arrayOf("image/*"))
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error launching system file picker: ${e.localizedMessage ?: e.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Rounded.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Import")
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val tagNameForExport = displayTagTitle.ifBlank { "GraphicsItem_${dialogItem.id}" }
+                                        val exportedFile = GraphicsImageManager.exportItemImage(
+                                            context = context,
+                                            tagName = tagNameForExport,
+                                            widthPx = dialogItem.Width.toInt(),
+                                            heightPx = dialogItem.Height.toInt(),
+                                            sourceFilename = selectedConfigStr
+                                        )
+                                        if (exportedFile != null) {
+                                            selectedConfigStr = exportedFile.name
+                                            Toast.makeText(context, "Exported image '${exportedFile.name}' to /Documents/AIListTest/graphics/", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Failed to export image.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Export")
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // 1. OffsetX Tag
+                            Text("OffsetX Tag (pixels offset)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        activeTagPickingTarget = "offsetX"
+                                        showTagPicker = true
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Sell, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = offsetXTag?.name ?: "None",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (offsetXTag != null) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (offsetXTag != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // 2. OffsetY Tag
+                            Text("OffsetY Tag (pixels offset)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        activeTagPickingTarget = "offsetY"
+                                        showTagPicker = true
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Sell, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = offsetYTag?.name ?: "None",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (offsetYTag != null) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (offsetYTag != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // 3. Rotation(CW) Tag
+                            Text("Rotation(CW) Tag (degrees)", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        activeTagPickingTarget = "rotation"
+                                        showTagPicker = true
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Sell, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = rotationTag?.name ?: "None",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (rotationTag != null) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (rotationTag != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = null)
+                                }
+                            }
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                // Coordinates Info Card
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text("Position (X, Y):", fontWeight = FontWeight.SemiBold)
-                        Text("(${dialogItem.OffsetX.toInt()} px, ${dialogItem.OffsetY.toInt()} px)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Size (W x H):", fontWeight = FontWeight.SemiBold)
-                        Text("${dialogItem.Width.toInt()} x ${dialogItem.Height.toInt()} px", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "Canvas Geometry",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Position (X, Y): (${dialogItem.OffsetX.toInt()} px, ${dialogItem.OffsetY.toInt()} px)", style = MaterialTheme.typography.bodySmall)
+                        Text("Size (W x H): ${dialogItem.Width.toInt()} x ${dialogItem.Height.toInt()} px", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-            },
-            confirmButton = {
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
-                        viewModel.deleteGraphicsScreenItem(dialogItem)
-                        if (activeItemId == dialogItem.id) activeItemId = null
-                        debugItemForDialog = null
+                        onDelete(dialogItem)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Icon(Icons.Rounded.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Delete Rectangle")
+                    Text("Delete")
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { debugItemForDialog = null }) {
-                    Text("Close")
+
+                Button(
+                    onClick = {
+                        val finalTagId = if (selectedCategory == "Data") selectedTagId else null
+                        val finalDisplayType = when (selectedCategory) {
+                            "Data" -> selectedDisplayType
+                            "Other" -> selectedDisplayType
+                            else -> "Image"
+                        }
+                        val finalConfigStr = when (selectedCategory) {
+                            "Other" -> if (selectedDisplayType == "Goto Page Button") selectedTargetScreenId.toString() else ""
+                            "Graphics" -> GraphicsImageConfig(
+                                fileName = selectedConfigStr,
+                                offsetXTagId = selectedOffsetXTagId,
+                                offsetYTagId = selectedOffsetYTagId,
+                                rotationTagId = selectedRotationTagId
+                            ).toJson()
+                            else -> ""
+                        }
+
+                        onSave(
+                            dialogItem.copy(
+                                parentTagId = finalTagId,
+                                Type = if (selectedCategory == "Data") selectedItemType else 0,
+                                DisplayType = finalDisplayType,
+                                configStr = finalConfigStr,
+                                isShowTagName = if (selectedCategory == "Data") isShowTagName else false
+                            )
+                        )
+                    }
+                ) {
+                    Text("Save")
                 }
             }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+
+    // Tag Name Picker Dialog when clicking any Tag field
+    if (showTagPicker) {
+        TagNamePickerDialog(
+            hierarchy = hierarchy,
+            dataTypes = dataTypes,
+            allowGroupSelection = false,
+            allowMultipleSelection = false,
+            showCreateGroupCheckbox = false,
+            allowBitSelection = activeTagPickingTarget == "itemTag",
+            showNoneOption = activeTagPickingTarget != "itemTag",
+            onSelectNone = {
+                when (activeTagPickingTarget) {
+                    "offsetX" -> selectedOffsetXTagId = null
+                    "offsetY" -> selectedOffsetYTagId = null
+                    "rotation" -> selectedRotationTagId = null
+                    "itemTag" -> selectedTagId = null
+                }
+                showTagPicker = false
+            },
+            onTagsSelected = { selectedPaths, _ ->
+                val chosenPath = selectedPaths.firstOrNull()
+                if (!chosenPath.isNullOrEmpty()) {
+                    val cleanName = chosenPath.substringAfterLast("/").trim()
+
+                    // Check if selection is a bit tag (ends with -[0-9]+)
+                    val bitMatchRegex = Regex("^(.+)-(\\d+)$")
+                    val bitMatch = bitMatchRegex.find(cleanName)
+
+                    if (bitMatch != null) {
+                        val parentName = bitMatch.groupValues[1].trim()
+                        val bitIdx = bitMatch.groupValues[2].toIntOrNull() ?: 0
+
+                        val match = hierarchy.flatMap { node -> node.packetsWithTags }
+                            .flatMap { p -> p.tagsWithBitTags }
+                            .find { t -> t.tag.name == parentName || t.tag.name.endsWith(parentName) }?.tag
+
+                        if (match != null) {
+                            when (activeTagPickingTarget) {
+                                "offsetX" -> selectedOffsetXTagId = match.id
+                                "offsetY" -> selectedOffsetYTagId = match.id
+                                "rotation" -> selectedRotationTagId = match.id
+                                "itemTag" -> {
+                                    selectedTagId = match.id
+                                    selectedItemType = bitIdx + 1
+                                }
+                            }
+                        }
+                    } else {
+                        val match = hierarchy.flatMap { node -> node.packetsWithTags }
+                            .flatMap { p -> p.tagsWithBitTags }
+                            .find { t -> t.tag.name == cleanName || chosenPath.endsWith(t.tag.name) }?.tag
+
+                        if (match != null) {
+                            when (activeTagPickingTarget) {
+                                "offsetX" -> selectedOffsetXTagId = match.id
+                                "offsetY" -> selectedOffsetYTagId = match.id
+                                "rotation" -> selectedRotationTagId = match.id
+                                "itemTag" -> {
+                                    selectedTagId = match.id
+                                    selectedItemType = 0
+                                }
+                            }
+                        }
+                    }
+                }
+                showTagPicker = false
+            },
+            onDismiss = { showTagPicker = false }
+        )
+    }
+
+    // Image File Picker Dialog when clicking Import button
+    if (showImagePickerDialog) {
+        ImageFilePickerDialog(
+            context = context,
+            onImageSelected = { selectedFilename ->
+                selectedConfigStr = selectedFilename
+            },
+            onDismiss = { showImagePickerDialog = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImageFilePickerDialog(
+    context: Context,
+    onImageSelected: (filename: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var availableFiles by remember { mutableStateOf(GraphicsImageManager.getAvailableGraphicsFiles(context)) }
+    var selectedFile by remember { mutableStateOf<GraphicsFileInfo?>(availableFiles.firstOrNull()) }
+
+    val openDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val importedName = GraphicsImageManager.importImageFromUri(context, uri)
+            if (!importedName.isNullOrEmpty()) {
+                availableFiles = GraphicsImageManager.getAvailableGraphicsFiles(context)
+                selectedFile = availableFiles.find { it.name == importedName }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Graphics Image File", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        openDocumentLauncher.launch(arrayOf("image/*"))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Browse System Files...")
+                }
+
+                Text(
+                    text = "Directory: /Documents/AIListTest/graphics/",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                ) {
+                    if (availableFiles.isEmpty()) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(16.dp)) {
+                            Text("No image files found in /Documents/AIListTest/graphics/.\nTap 'Browse System Files...' to select an image.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxWidth().padding(4.dp)) {
+                            items(availableFiles) { fileInfo ->
+                                val isSelected = selectedFile?.path == fileInfo.path
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, RoundedCornerShape(6.dp))
+                                        .clickable { selectedFile = fileInfo }
+                                        .padding(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Image,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(fileInfo.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                        Text("${fileInfo.sizeText} • ${fileInfo.dateText}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val chosen = selectedFile
+                    if (chosen != null) {
+                        onImageSelected(chosen.name)
+                        onDismiss()
+                    }
+                },
+                enabled = selectedFile != null
+            ) {
+                Text("Select Image")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun AutoResizedText(
+    text: String,
+    style: TextStyle = MaterialTheme.typography.titleMedium,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontWeight: FontWeight = FontWeight.Bold,
+    maxLines: Int = 1
+) {
+    var resizedTextStyle by remember(text) {
+        mutableStateOf(style.copy(fontSize = 100.sp, fontWeight = fontWeight, color = color))
+    }
+    var shouldDraw by remember(text) { mutableStateOf(false) }
+
+    Text(
+        text = text,
+        color = color,
+        fontWeight = fontWeight,
+        style = resizedTextStyle,
+        softWrap = false,
+        maxLines = maxLines,
+        overflow = TextOverflow.Clip,
+        onTextLayout = { result ->
+            if (result.didOverflowWidth || result.didOverflowHeight) {
+                if (resizedTextStyle.fontSize > 6.sp) {
+                    resizedTextStyle = resizedTextStyle.copy(fontSize = resizedTextStyle.fontSize * 0.9f)
+                } else {
+                    shouldDraw = true
+                }
+            } else {
+                shouldDraw = true
+            }
+        },
+        modifier = modifier.drawWithContent {
+            if (shouldDraw) {
+                drawContent()
+            }
+        }
+    )
+}
+
+@Composable
+fun GraphicsItemWidget(
+    item: GraphicsScreenItems,
+    tag: TagEntity?,
+    allScreens: List<Screens> = emptyList(),
+    hierarchy: List<NodeWithPacketsAndTags> = emptyList(),
+    enabled: Boolean = true,
+    onNavigateToScreen: (Screens) -> Unit = {},
+    onShowSnackbar: (String) -> Unit = {},
+    onBitAction: (bitVal: Boolean?, isToggle: Boolean) -> Unit = { _, _ -> },
+    modifier: Modifier = Modifier
+) {
+    val displayType = item.DisplayType
+    val storedVal = tag?.storedValue ?: "0"
+    val isBitTagItem = item.Type in 1..1000
+    val bitIndex = if (isBitTagItem) (item.Type - 1) else null
+    val parentTagVal = tag?.storedValue?.toLongOrNull() ?: 0L
+
+    val isBitSet = if (isBitTagItem && bitIndex != null) {
+        ((parentTagVal and (1L shl bitIndex)) != 0L)
+    } else {
+        storedVal.toDoubleOrNull()?.toInt() != 0 || storedVal.equals("1", ignoreCase = true) || storedVal.equals("true", ignoreCase = true)
+    }
+
+    val tagDisplayName = when {
+        item.isShowTagName && tag != null && isBitTagItem && bitIndex != null -> "${tag.name}-$bitIndex"
+        item.isShowTagName && tag != null -> tag.name
+        else -> null
+    }
+
+    val imageConfig = remember(item.configStr) {
+        GraphicsImageConfig.fromString(item.configStr)
+    }
+
+    val context = LocalContext.current
+    val imageFile = remember(imageConfig.fileName) {
+        if (imageConfig.fileName.isNotBlank()) {
+            File(GraphicsImageManager.getGraphicsDirectory(context), imageConfig.fileName)
+        } else null
+    }
+    val imageBitmap = remember(imageFile?.absolutePath, imageFile?.lastModified()) {
+        if (imageFile != null && imageFile.exists() && imageFile.isFile) {
+            try {
+                BitmapFactory.decodeFile(imageFile.absolutePath)?.asImageBitmap()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        } else null
+    }
+
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+        modifier = modifier
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(2.dp)
+        ) {
+            if (imageBitmap != null) {
+                // Render fitted imported/exported image bitmap
+                Image(
+                    bitmap = imageBitmap,
+                    contentDescription = item.configStr,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                when (displayType) {
+                    "Goto Page Button" -> {
+                        val targetScreenId = item.configStr.toLongOrNull() ?: 0L
+                        val targetScreen = remember(allScreens, targetScreenId) {
+                            allScreens.find { it.id == targetScreenId }
+                        }
+                        val targetScreenName = targetScreen?.Name ?: "Goto Screen"
+
+                        Button(
+                            onClick = {
+                                if (enabled && targetScreen != null) {
+                                    onNavigateToScreen(targetScreen)
+                                } else {
+                                    onShowSnackbar("Goto Screen: $targetScreenName")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            ),
+                            contentPadding = PaddingValues(2.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            AutoResizedText(
+                                text = targetScreenName,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "TBD" -> {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize().padding(2.dp)) {
+                                AutoResizedText(
+                                    text = "TBD",
+                                    color = MaterialTheme.colorScheme.outline,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    "On_Button" -> {
+                        Button(
+                            onClick = { if (enabled) onBitAction(true, false) },
+                            enabled = enabled,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFF757575),
+                                disabledContainerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFF757575)
+                            ),
+                            contentPadding = PaddingValues(2.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            AutoResizedText(
+                                text = if (isBitSet) "ON" else "OFF",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "Off_Button" -> {
+                        Button(
+                            onClick = { if (enabled) onBitAction(false, false) },
+                            enabled = enabled,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFFE53935),
+                                disabledContainerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFFE53935)
+                            ),
+                            contentPadding = PaddingValues(2.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            AutoResizedText(
+                                text = if (isBitSet) "ON" else "OFF",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "Toggle_Button" -> {
+                        Button(
+                            onClick = { if (enabled) onBitAction(null, true) },
+                            enabled = enabled,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFF757575),
+                                disabledContainerColor = if (isBitSet) Color(0xFF4CAF50) else Color(0xFF757575)
+                            ),
+                            contentPadding = PaddingValues(2.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            AutoResizedText(
+                                text = if (isBitSet) "ON" else "OFF",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "Switch" -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxSize().padding(2.dp)
+                        ) {
+                            Switch(
+                                checked = isBitSet,
+                                onCheckedChange = if (enabled) { checked -> onBitAction(checked, false) } else null,
+                                enabled = enabled,
+                                modifier = Modifier.scale(0.85f)
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            AutoResizedText(
+                                text = if (isBitSet) "ON" else "OFF",
+                                color = if (isBitSet) Color(0xFF2E7D32) else Color.Gray,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "CheckBox" -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxSize().padding(2.dp)
+                        ) {
+                            Checkbox(
+                                checked = isBitSet,
+                                onCheckedChange = if (enabled) { { onBitAction(null, true) } } else null,
+                                enabled = enabled
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            AutoResizedText(
+                                text = if (isBitSet) "ON" else "OFF",
+                                color = if (isBitSet) Color(0xFF2E7D32) else Color.Gray,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    "Radio_Button" -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxSize().padding(2.dp)
+                        ) {
+                            RadioButton(
+                                selected = isBitSet,
+                                onClick = if (enabled) { { onBitAction(null, true) } } else null,
+                                enabled = enabled
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            AutoResizedText(
+                                text = if (isBitSet) "ON" else "OFF",
+                                color = if (isBitSet) Color(0xFF2E7D32) else Color.Gray,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    else -> {
+                        // Default Numeric or Tag Value — Show ONLY the value (not the tag name)
+                        val textToShow = if (tag != null) tag.storedValue.ifEmpty { "0" } else (if (storedVal.isNotEmpty() && storedVal != "0") storedVal else displayType)
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.fillMaxSize().padding(4.dp)
+                            ) {
+                                AutoResizedText(
+                                    text = textToShow,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Upper Left Corner Tag Name Label (like an outlined text box with a label)
+            if (!tagDisplayName.isNullOrEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 3.dp, top = 1.dp)
+                ) {
+                    Text(
+                        text = tagDisplayName,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ScreenConfigDialog(
+    screen: Screens,
+    context: Context,
+    screenWidthPx: Int,
+    screenHeightPx: Int,
+    onDismiss: () -> Unit,
+    onSave: (Screens) -> Unit
+) {
+    var bgType by remember(screen.id, screen.backgroundType) {
+        mutableStateOf(screen.backgroundType.ifBlank { "Color" })
+    }
+    var bgColorHex by remember(screen.id, screen.backgroundColorHex) {
+        mutableStateOf(screen.backgroundColorHex.ifBlank { "#FAFAFA" })
+    }
+    var bgImageName by remember(screen.id, screen.backgroundImage) {
+        mutableStateOf(screen.backgroundImage)
+    }
+
+    var showColorPicker by remember { mutableStateOf(false) }
+    var showImagePicker by remember { mutableStateOf(false) }
+
+    val openScreenBgLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val importedName = GraphicsImageManager.importImageFromUri(context, uri)
+                if (!importedName.isNullOrEmpty()) {
+                    bgImageName = importedName
+                    Toast.makeText(context, "Imported background image '$importedName'", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Error importing background image: Could not copy file from system URI.", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Error importing background image: ${e.localizedMessage ?: e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Configure Screen Background", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Background Type Selector Card
+                OutlinedCard(
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Background Type",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { bgType = "Color" }
+                            ) {
+                                RadioButton(
+                                    selected = bgType == "Color",
+                                    onClick = { bgType = "Color" }
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Color", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { bgType = "Image" }
+                            ) {
+                                RadioButton(
+                                    selected = bgType == "Image",
+                                    onClick = { bgType = "Image" }
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Image", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+
+                        if (bgType == "Color") {
+                            Text("Background Color", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            val parsedColor = try { Color(android.graphics.Color.parseColor(bgColorHex)) } catch (_: Exception) { Color(0xFFFAFAFA) }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showColorPicker = true }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = parsedColor,
+                                        border = BorderStroke(1.dp, Color.Gray),
+                                        modifier = Modifier.size(24.dp)
+                                    ) {}
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = bgColorHex,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text("Change", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        } else {
+                            Text("Background Image File", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = if (bgImageName.isNotBlank()) bgImageName else "(No background image selected)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (bgImageName.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (bgImageName.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            openScreenBgLauncher.launch(arrayOf("image/*"))
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error launching system file picker: ${e.localizedMessage ?: e.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Rounded.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Import")
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val exportName = screen.Name.ifBlank { "Screen_${screen.id}" }
+                                        val exportedFile = GraphicsImageManager.exportItemImage(
+                                            context = context,
+                                            tagName = exportName,
+                                            widthPx = screenWidthPx,
+                                            heightPx = screenHeightPx,
+                                            sourceFilename = bgImageName
+                                        )
+                                        if (exportedFile != null) {
+                                            bgImageName = exportedFile.name
+                                            Toast.makeText(context, "Exported background image '${exportedFile.name}' to /Documents/AIListTest/graphics/", Toast.LENGTH_LONG).show()
+                                        } else {
+                                            Toast.makeText(context, "Failed to export background image.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Export")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(
+                        screen.copy(
+                            backgroundType = bgType,
+                            backgroundColorHex = bgColorHex,
+                            backgroundImage = bgImageName
+                        )
+                    )
+                    onDismiss()
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+
+    if (showColorPicker) {
+        GroupColorPickerDialog(
+            initialColorHex = bgColorHex,
+            onColorSelected = { newHex ->
+                bgColorHex = newHex
+                showColorPicker = false
+            },
+            onDismiss = { showColorPicker = false }
+        )
+    }
+
+    if (showImagePicker) {
+        ImageFilePickerDialog(
+            context = context,
+            onImageSelected = { selectedFilename ->
+                bgImageName = selectedFilename
+                showImagePicker = false
+            },
+            onDismiss = { showImagePicker = false }
         )
     }
 }

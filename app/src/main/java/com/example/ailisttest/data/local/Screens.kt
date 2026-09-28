@@ -12,7 +12,10 @@ data class Screens(
     @PrimaryKey(autoGenerate = true)
     var id: Long = 0,
     @ColumnInfo var Name: String = "",
-    @ColumnInfo var Type: Int = TYPE_LIST
+    @ColumnInfo var Type: Int = TYPE_LIST,
+    @ColumnInfo(name = "backgroundColorHex") var backgroundColorHex: String = "#FAFAFA",
+    @ColumnInfo(name = "backgroundImage") var backgroundImage: String = "",
+    @ColumnInfo(name = "backgroundType") var backgroundType: String = "Color"
 ) {
     companion object {
         const val TYPE_LIST = 1
@@ -141,7 +144,9 @@ data class GraphicsScreenItems(
     @ColumnInfo var Height: Float = 0f,
     @ColumnInfo(name = "isReadOnly") var isReadOnly: Boolean = true,
     @ColumnInfo(name = "isTwoTouch") var isTwoTouch: Boolean = true,
-    @ColumnInfo(name = "ShowBits") var isShowBits: Boolean = false
+    @ColumnInfo(name = "ShowBits") var isShowBits: Boolean = false,
+    @ColumnInfo(name = "ShowTagName") var isShowTagName: Boolean = false,
+    @ColumnInfo(name = "configStr") var configStr: String = ""
 )
 
 data class GraphicsScreenItemWithTag(
