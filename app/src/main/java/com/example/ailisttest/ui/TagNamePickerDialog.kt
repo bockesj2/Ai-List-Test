@@ -36,6 +36,8 @@ fun TagNamePickerDialog(
     showCreateGroupCheckbox: Boolean = true,
     allowBitSelection: Boolean = true,
     showNoneOption: Boolean = false,
+    filterNodeId: Long? = null,
+    allowedPlcPreset: String? = null,
     onSelectNone: (() -> Unit)? = null,
     onTagsSelected: (selectedNames: List<String>, createNewGroup: Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -45,6 +47,14 @@ fun TagNamePickerDialog(
     val expandedNodes = remember { mutableStateMapOf<Long, Boolean>() }
     val expandedPackets = remember { mutableStateMapOf<Long, Boolean>() }
     val expandedTags = remember { mutableStateMapOf<Long, Boolean>() }
+
+    val effectiveHierarchy = remember(hierarchy, filterNodeId) {
+        if (filterNodeId != null) {
+            hierarchy.filter { it.node.id == filterNodeId }
+        } else {
+            hierarchy
+        }
+    }
 
     fun toggleSelection(path: String) {
         if (allowMultipleSelection) {
@@ -117,7 +127,7 @@ fun TagNamePickerDialog(
                         state = listState,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        hierarchy.forEach { nodeWithPackets ->
+                        effectiveHierarchy.forEach { nodeWithPackets ->
                             val node = nodeWithPackets.node
                             item(key = "picker_node_${node.id}") {
                                 PickerTreeRow(

@@ -1,6 +1,7 @@
 package com.example.ailisttest.ui.screens
 
 import android.graphics.BitmapFactory
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -20,6 +21,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.ImageLoader
+import coil.compose.AsyncImage
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
+import coil.request.ImageRequest
 import com.example.ailisttest.data.GraphicsImageManager
 import com.example.ailisttest.ui.MainViewModel
 import java.io.File
@@ -32,8 +38,12 @@ fun DynamicGraphicsScreen(
     onOpenDrawer: () -> Unit
 ) {
     val graphicsScreensWithItems by viewModel.graphicsScreensWithItems.collectAsStateWithLifecycle()
-    val screenWithItems = remember(graphicsScreensWithItems, screenId) {
+    val graphicsGroupsWithItems by viewModel.graphicsGroupsWithItems.collectAsStateWithLifecycle()
+    val allScreens by viewModel.allScreens.collectAsStateWithLifecycle()
+    val hierarchy by viewModel.hierarchy.collectAsStateWithLifecycle()
+    val screenWithItems = remember(graphicsScreensWithItems, graphicsGroupsWithItems, screenId) {
         graphicsScreensWithItems.find { it.screen.id == screenId }
+            ?: graphicsGroupsWithItems.find { it.screen.id == screenId }
     }
     val currentScreen = screenWithItems?.screen
     val screenName = currentScreen?.Name ?: "Graphics Screen"
@@ -42,9 +52,19 @@ fun DynamicGraphicsScreen(
     }
 
     val context = LocalContext.current
+    val imageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .components {
+                add(GifDecoder.Factory())
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                }
+            }
+            .build()
+    }
     val screenBgFile = remember(currentScreen?.backgroundImage) {
         if (currentScreen != null && currentScreen.backgroundImage.isNotBlank()) {
-            File(GraphicsImageManager.getGraphicsDirectory(context), currentScreen.backgroundImage)
+            GraphicsImageManager.findGraphicsFile(context, currentScreen.backgroundImage)
         } else null
     }
     val screenBgBitmap = remember(screenBgFile?.absolutePath, screenBgFile?.lastModified()) {
@@ -58,11 +78,15 @@ fun DynamicGraphicsScreen(
         } else null
     }
 
-    val parsedScreenBgColor = remember(currentScreen?.backgroundColorHex) {
-        try {
-            Color(android.graphics.Color.parseColor(currentScreen?.backgroundColorHex ?: "#FAFAFA"))
-        } catch (_: Exception) {
-            Color(0xFFFAFAFA)
+    val parsedScreenBgColor = remember(currentScreen?.backgroundColorHex, currentScreen?.backgroundType) {
+        if (currentScreen?.backgroundType == "Transparent") {
+            Color.Transparent
+        } else {
+            try {
+                Color(android.graphics.Color.parseColor(currentScreen?.backgroundColorHex ?: "#FAFAFA"))
+            } catch (_: Exception) {
+                Color(0xFFFAFAFA)
+            }
         }
     }
 
@@ -85,13 +109,26 @@ fun DynamicGraphicsScreen(
                 .background(parsedScreenBgColor)
         ) {
             // Render Stretched Screen Background Image if configured
-            if (currentScreen?.backgroundType == "Image" && screenBgBitmap != null) {
-                Image(
-                    bitmap = screenBgBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.fillMaxSize()
-                )
+            if (currentScreen?.backgroundType == "Image" && screenBgFile != null && screenBgFile.exists()) {
+                if (isAnimatedFileName(screenBgFile.name)) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(screenBgFile)
+                            .crossfade(true)
+                            .build(),
+                        imageLoader = imageLoader,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (screenBgBitmap != null) {
+                    Image(
+                        bitmap = screenBgBitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
             if (itemsList.isEmpty()) {
@@ -138,6 +175,8 @@ fun DynamicGraphicsScreen(
                         GraphicsItemWidget(
                             item = item,
                             tag = tag,
+                            allScreens = allScreens,
+                            hierarchy = hierarchy,
                             onBitAction = { bitVal, isToggle ->
                                 if (tag != null) {
                                     if (item.Type in 1..1000) {

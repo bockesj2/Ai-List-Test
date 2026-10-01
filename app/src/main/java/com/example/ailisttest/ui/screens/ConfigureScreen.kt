@@ -2213,6 +2213,7 @@ fun ClearIconButton(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NodeForm(
     node: NodeEntity,
@@ -2227,7 +2228,15 @@ fun NodeForm(
 ) {
     var name by remember(node.id) { mutableStateOf(node.name) }
     var ipAddress by remember(node.id) { mutableStateOf(node.ipAddress) }
+    var plcPreset by remember(node.id) { mutableStateOf(node.plcPreset.ifBlank { "Click Plus PLC" }) }
     var isEdited by remember(node.id) { mutableStateOf(false) }
+
+    val plcPresets = listOf("Click Plus PLC", "Do-more PLC", "Modbus Standard", "Custom")
+    var plcPresetExpanded by remember { mutableStateOf(false) }
+
+    val isNodeSaved = remember(node, hierarchy) {
+        node.id > 0L && hierarchy.any { it.node.id == node.id && it.node.name.isNotBlank() }
+    }
 
     val nameFocusRequester = remember { FocusRequester() }
     val ipFocusRequester = remember { FocusRequester() }
@@ -2243,7 +2252,7 @@ fun NodeForm(
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    val performSave = remember(node, name, ipAddress, hierarchy) {
+    val performSave = remember(node, name, ipAddress, plcPreset, hierarchy) {
         {
             keyboardController?.hide()
             focusManager.clearFocus()
@@ -2259,7 +2268,7 @@ fun NodeForm(
             } else if (!trimmedIp.matches(ipRegex)) {
                 onShowSnackbar("Warning: Invalid IP address format (e.g., 192.168.1.1).")
             } else {
-                onUpdate(node.copy(name = trimmedName, ipAddress = trimmedIp))
+                onUpdate(node.copy(name = trimmedName, ipAddress = trimmedIp, plcPreset = plcPreset))
                 isEdited = false
                 onEditStateChange(false)
                 onNodeSaved(node.id)
@@ -2382,6 +2391,51 @@ fun NodeForm(
                 )
             )
         }
+
+        // PLC Type Preset Selection (Editable when node is newly created/unsaved, locked once saved)
+        if (!isNodeSaved) {
+            ExposedDropdownMenuBox(
+                expanded = plcPresetExpanded,
+                onExpandedChange = { plcPresetExpanded = !plcPresetExpanded },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            ) {
+                OutlinedTextField(
+                    value = plcPreset,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("PLC Type Preset", style = MaterialTheme.typography.labelSmall) },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = plcPresetExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = plcPresetExpanded,
+                    onDismissRequest = { plcPresetExpanded = false }
+                ) {
+                    plcPresets.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option) },
+                            onClick = {
+                                plcPreset = option
+                                markEdited()
+                                plcPresetExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        } else {
+            OutlinedTextField(
+                value = plcPreset,
+                onValueChange = {},
+                readOnly = true,
+                enabled = false,
+                label = { Text("PLC Type Preset (Saved)") },
+                textStyle = MaterialTheme.typography.bodySmall,
+                trailingIcon = { Icon(Icons.Rounded.Lock, contentDescription = "Locked", tint = MaterialTheme.colorScheme.outline) },
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            )
+        }
     }
 }
 
@@ -2450,8 +2504,24 @@ fun PacketForm(
             }
         }
     }
-    val defaultIntTypeId = remember(dataTypes) {
-        dataTypes.find { it.shortName.equals("DS", ignoreCase = true) || it.dataType.equals("INT", ignoreCase = true) }?.id?.toString() ?: "0"
+    val parentNode = remember(hierarchy, packet.parentNodeId) {
+        hierarchy.find { it.node.id == packet.parentNodeId }?.node
+    }
+
+    val filteredDataTypes = remember(dataTypes, parentNode?.plcPreset) {
+        val preset = parentNode?.plcPreset ?: "Click Plus PLC"
+        if (preset.equals("Click Plus PLC", ignoreCase = true)) {
+            dataTypes.filter { dt ->
+                val short = dt.shortName.uppercase()
+                short in listOf("DS", "DD", "DH", "DF", "C", "CT", "T", "B")
+            }
+        } else {
+            dataTypes
+        }
+    }
+
+    val defaultIntTypeId = remember(filteredDataTypes) {
+        filteredDataTypes.find { it.shortName.equals("DS", ignoreCase = true) || it.dataType.equals("INT", ignoreCase = true) }?.id?.toString() ?: "0"
     }
 
     var name by remember(packet.id) { mutableStateOf(packet.name) }
@@ -2723,8 +2793,8 @@ fun PacketForm(
                         .fillMaxWidth()
                 )
                 if (isTypeEditable) {
-                    val uniqueDataTypes = remember(dataTypes) {
-                        dataTypes.distinctBy { "${it.shortName}_${it.description}".uppercase() }
+                    val uniqueDataTypes = remember(filteredDataTypes) {
+                        filteredDataTypes.distinctBy { "${it.shortName}_${it.description}".uppercase() }
                     }
                     ExposedDropdownMenu(
                         expanded = dropdownExpanded,

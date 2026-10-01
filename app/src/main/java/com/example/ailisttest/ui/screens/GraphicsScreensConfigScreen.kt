@@ -31,12 +31,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -45,6 +47,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -52,6 +55,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import coil.ImageLoader
+import coil.compose.AsyncImage
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
+import coil.request.ImageRequest
+
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import com.example.ailisttest.data.GraphicsFileInfo
@@ -78,6 +87,11 @@ import com.example.ailisttest.ui.TagNamePickerDialog
 import com.example.ailisttest.ui.components.ScrollMoreDownIndicator
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+
+fun isAnimatedFileName(name: String): Boolean {
+    val lower = name.lowercase()
+    return lower.endsWith(".gif") || lower.endsWith(".webp")
+}
 
 sealed class SelectedGraphicsListItem {
     data class Screen(val screen: Screens) : SelectedGraphicsListItem()
@@ -452,27 +466,95 @@ fun GraphicsScreensTreeList(
                 }
 
                 if (isExpanded) {
-                    items(screenWithItems.items, key = { "graphics_item_${it.item.id}" }) { itemWithTag ->
-                        val isItemMatches = (selectedItem as? SelectedGraphicsListItem.Item)?.itemWithTag?.item?.id == itemWithTag.item.id
-                        val item = itemWithTag.item
-                        val tag = itemWithTag.tag
+                    val rawScreenItems = screenWithItems.items
+                    val allItemIds = rawScreenItems.map { it.item.id }.toSet()
+                    val validScreenItems = rawScreenItems.filter { it.item.parentCustomGroupId == null || allItemIds.contains(it.item.parentCustomGroupId) }
 
-                        val displayTitle = tag?.name ?: "Item #${item.id}"
+                    val topLevelItems = validScreenItems.filter { it.item.parentCustomGroupId == null }
 
-                        GraphicsScreenItemRow(
-                            text = displayTitle,
-                            subtitle = "Pos: (${item.OffsetX.toInt()}, ${item.OffsetY.toInt()}) • Size: ${item.Width.toInt()}x${item.Height.toInt()}",
-                            level = 1,
-                            isSelected = isItemMatches,
-                            onSelect = {
-                                onItemSelected(SelectedGraphicsListItem.Item(itemWithTag, screen))
-                                onItemClick(screen, itemWithTag)
-                            },
-                            onSelectCanvasItem = {
-                                onSelectCanvasItem(screen, itemWithTag)
-                            },
-                            onDelete = { onDeleteItem(screen, itemWithTag) }
-                        )
+                    topLevelItems.forEach { topItemWithTag ->
+                        val topItem = topItemWithTag.item
+                        val topTag = topItemWithTag.tag
+
+                        if (topItem.DisplayType == "Group Box") {
+                            // 2nd Tier Group Box Header
+                            val subItems = validScreenItems.filter { it.item.parentCustomGroupId == topItem.id }
+                            val groupName = topItem.configStr.ifBlank { "Group Box #${topItem.id}" }
+                            val isGroupExpanded = expandedScreens[topItem.id] ?: true
+                            val isGroupSelected = (selectedItem as? SelectedGraphicsListItem.Item)?.itemWithTag?.item?.id == topItem.id
+
+                            item(key = "graphics_group_${topItem.id}") {
+                                GraphicsGroupRowHeader(
+                                    groupName = groupName,
+                                    itemCount = subItems.size,
+                                    isExpanded = isGroupExpanded,
+                                    isSelected = isGroupSelected,
+                                    onToggleExpand = { viewModel.toggleScreenExpanded(topItem.id) },
+                                    onSelect = {
+                                        onItemSelected(SelectedGraphicsListItem.Item(topItemWithTag, screen))
+                                        onItemClick(screen, topItemWithTag)
+                                    },
+                                    onSelectCanvasItem = {
+                                        onSelectCanvasItem(screen, topItemWithTag)
+                                    },
+                                    onDelete = { onDeleteItem(screen, topItemWithTag) }
+                                )
+                            }
+
+                            // 3rd Tier Sub-Items under Group Box
+                            if (isGroupExpanded) {
+                                items(subItems, key = { "graphics_item_${it.item.id}" }) { subItemWithTag ->
+                                    val isSubItemMatches = (selectedItem as? SelectedGraphicsListItem.Item)?.itemWithTag?.item?.id == subItemWithTag.item.id
+                                    val subItem = subItemWithTag.item
+                                    val subTag = subItemWithTag.tag
+                                    val subTitle = when {
+                                        subTag != null -> subTag.name
+                                        subItem.DisplayType.isNotBlank() && subItem.DisplayType != "Rectangle" -> subItem.DisplayType
+                                        else -> "Item #${subItem.id}"
+                                    }
+
+                                    GraphicsScreenItemRow(
+                                        text = subTitle,
+                                        subtitle = "Pos: (${subItem.OffsetX.toInt()}, ${subItem.OffsetY.toInt()}) • Size: ${subItem.Width.toInt()}x${subItem.Height.toInt()}",
+                                        level = 2,
+                                        isSelected = isSubItemMatches,
+                                        onSelect = {
+                                            onItemSelected(SelectedGraphicsListItem.Item(subItemWithTag, screen))
+                                            onItemClick(screen, subItemWithTag)
+                                        },
+                                        onSelectCanvasItem = {
+                                            onSelectCanvasItem(screen, subItemWithTag)
+                                        },
+                                        onDelete = { onDeleteItem(screen, subItemWithTag) }
+                                    )
+                                }
+                            }
+                        } else {
+                            // Top-Level Item
+                            val isItemMatches = (selectedItem as? SelectedGraphicsListItem.Item)?.itemWithTag?.item?.id == topItem.id
+                            val displayTitle = when {
+                                topTag != null -> topTag.name
+                                topItem.DisplayType.isNotBlank() && topItem.DisplayType != "Rectangle" -> topItem.DisplayType
+                                else -> "Item #${topItem.id}"
+                            }
+
+                            item(key = "graphics_item_${topItem.id}") {
+                                GraphicsScreenItemRow(
+                                    text = displayTitle,
+                                    subtitle = "Pos: (${topItem.OffsetX.toInt()}, ${topItem.OffsetY.toInt()}) • Size: ${topItem.Width.toInt()}x${topItem.Height.toInt()}",
+                                    level = 1,
+                                    isSelected = isItemMatches,
+                                    onSelect = {
+                                        onItemSelected(SelectedGraphicsListItem.Item(topItemWithTag, screen))
+                                        onItemClick(screen, topItemWithTag)
+                                    },
+                                    onSelectCanvasItem = {
+                                        onSelectCanvasItem(screen, topItemWithTag)
+                                    },
+                                    onDelete = { onDeleteItem(screen, topItemWithTag) }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -560,6 +642,92 @@ fun GraphicsScreenRowHeader(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Edit", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.width(4.dp))
+
+            IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Rounded.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun GraphicsGroupRowHeader(
+    groupName: String,
+    itemCount: Int,
+    isExpanded: Boolean,
+    isSelected: Boolean,
+    onToggleExpand: () -> Unit,
+    onSelect: () -> Unit,
+    onSelectCanvasItem: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val bg = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bg)
+            .clickable(onClick = onSelect)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .padding(start = 20.dp, end = 8.dp)
+                .height(48.dp)
+        ) {
+            IconButton(
+                onClick = onToggleExpand,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            Icon(
+                imageVector = Icons.Rounded.Folder,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(horizontal = 6.dp)
+                    .size(20.dp)
+            )
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = groupName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "Group Box ($itemCount items)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Prominent "Select" Button on Group Box Header Row
+            FilledTonalButton(
+                onClick = onSelectCanvasItem,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier.height(30.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.CheckCircle,
+                    contentDescription = "Select on Canvas",
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Select", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             }
 
             Spacer(modifier = Modifier.width(4.dp))
@@ -862,6 +1030,11 @@ fun GraphicsScreenDetailPane(
     }
 }
 
+private fun Float.safeCoerceIn(minVal: Float, maxVal: Float): Float {
+    if (minVal >= maxVal) return minVal
+    return this.coerceIn(minVal, maxVal)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GraphicsBlankEditCanvasScreen(
@@ -871,14 +1044,19 @@ fun GraphicsBlankEditCanvasScreen(
     onBack: () -> Unit
 ) {
     val graphicsScreensWithItems by viewModel.graphicsScreensWithItems.collectAsStateWithLifecycle()
+    val graphicsGroupsWithItems by viewModel.graphicsGroupsWithItems.collectAsStateWithLifecycle()
     val allScreens by viewModel.allScreens.collectAsStateWithLifecycle()
     val hierarchy by viewModel.hierarchy.collectAsStateWithLifecycle()
     val dataTypes by viewModel.dataTypes.collectAsStateWithLifecycle()
-    val screenWithItems = remember(graphicsScreensWithItems, screen.id) {
+
+    val screenWithItems = remember(graphicsScreensWithItems, graphicsGroupsWithItems, screen.id) {
         graphicsScreensWithItems.find { it.screen.id == screen.id }
+            ?: graphicsGroupsWithItems.find { it.screen.id == screen.id }
     }
     val itemsList = remember(screenWithItems) {
-        screenWithItems?.items?.map { it.item } ?: emptyList()
+        val rawItems = screenWithItems?.items?.map { it.item } ?: emptyList()
+        val allItemIds = rawItems.map { it.id }.toSet()
+        rawItems.filter { it.parentCustomGroupId == null || allItemIds.contains(it.parentCustomGroupId) }
     }
 
     // Pan & Zoom Scale States
@@ -887,7 +1065,27 @@ fun GraphicsBlankEditCanvasScreen(
     var isPanMode by remember { mutableStateOf(false) } // False = Edit/Draw Mode, True = Pan Mode
 
     var activeItemId by remember(screen.id, initialSelectedItemId) { mutableStateOf<Long?>(initialSelectedItemId) }
+    var activeEditingGroupId by remember { mutableStateOf<Long?>(null) }
     var debugItemForDialog by remember { mutableStateOf<GraphicsScreenItems?>(null) }
+    var groupScreenForConfigDialog by remember { mutableStateOf<Screens?>(null) }
+    var groupToDelete by remember { mutableStateOf<GraphicsScreenItems?>(null) }
+
+    val activeScreen = screenWithItems?.screen ?: screen
+    val isGraphicsGroupScreen = activeScreen.Type == Screens.TYPE_GRAPHICS_GROUP
+
+    var isGroupCanvasSizingMode by remember(activeScreen.id) {
+        mutableStateOf(isGraphicsGroupScreen && activeScreen.canvasWidth <= 0f)
+    }
+
+    var groupCanvasWidth by remember(activeScreen.id, activeScreen.canvasWidth) {
+        mutableFloatStateOf(if (activeScreen.canvasWidth > 0f) activeScreen.canvasWidth else 0f)
+    }
+
+    var groupCanvasHeight by remember(activeScreen.id, activeScreen.canvasHeight) {
+        mutableFloatStateOf(if (activeScreen.canvasHeight > 0f) activeScreen.canvasHeight else 0f)
+    }
+
+    var isResizingGroupCanvas by remember { mutableStateOf(false) }
 
     // Transient in-memory rectangle during active dragging for instant 60/120 FPS responsiveness
     var draggingRectOverride by remember { mutableStateOf<GraphicsScreenItems?>(null) }
@@ -930,11 +1128,20 @@ fun GraphicsBlankEditCanvasScreen(
     var showScreenConfigDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    val activeScreen = screenWithItems?.screen ?: screen
+    val imageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .components {
+                add(GifDecoder.Factory())
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                }
+            }
+            .build()
+    }
 
     val screenBgFile = remember(activeScreen.backgroundImage) {
         if (activeScreen.backgroundImage.isNotBlank()) {
-            File(GraphicsImageManager.getGraphicsDirectory(context), activeScreen.backgroundImage)
+            GraphicsImageManager.findGraphicsFile(context, activeScreen.backgroundImage)
         } else null
     }
     val screenBgBitmap = remember(screenBgFile?.absolutePath, screenBgFile?.lastModified()) {
@@ -948,11 +1155,15 @@ fun GraphicsBlankEditCanvasScreen(
         } else null
     }
 
-    val parsedScreenBgColor = remember(activeScreen.backgroundColorHex) {
-        try {
-            Color(android.graphics.Color.parseColor(activeScreen.backgroundColorHex.ifBlank { "#FAFAFA" }))
-        } catch (_: Exception) {
-            Color(0xFFFAFAFA)
+    val parsedScreenBgColor = remember(activeScreen.backgroundColorHex, activeScreen.backgroundType) {
+        if (activeScreen.backgroundType == "Transparent") {
+            Color.Transparent
+        } else {
+            try {
+                Color(android.graphics.Color.parseColor(activeScreen.backgroundColorHex.ifBlank { "#FAFAFA" }))
+            } catch (_: Exception) {
+                Color(0xFFFAFAFA)
+            }
         }
     }
 
@@ -970,8 +1181,9 @@ fun GraphicsBlankEditCanvasScreen(
             TopAppBar(
                 title = {
                     Column {
+                        val editorTitle = if (isGraphicsGroupScreen) "Group Layout Editor" else "Canvas Layout Editor"
                         Text(activeScreen.Name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                        Text("Canvas Layout Editor — ${itemsList.size} item(s)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("$editorTitle — ${itemsList.size} item(s)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 navigationIcon = {
@@ -980,6 +1192,25 @@ fun GraphicsBlankEditCanvasScreen(
                     }
                 },
                 actions = {
+                    if (isGraphicsGroupScreen) {
+                        // Set Size Button for Group Canvas
+                        OutlinedButton(
+                            onClick = {
+                                isGroupCanvasSizingMode = true
+                                activeItemId = null
+                                activeEditingGroupId = null
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Icon(Icons.Rounded.Crop, contentDescription = "Set Size", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Set Size", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+
                     // Configure Screen Background Button
                     OutlinedButton(
                         onClick = { showScreenConfigDialog = true },
@@ -1027,12 +1258,31 @@ fun GraphicsBlankEditCanvasScreen(
             )
         }
     ) { innerPadding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .background(parsedScreenBgColor)
-                // 1. Pinch-To-Zoom & Two-Finger Pan Gesture Detector
+                .background(if (isGraphicsGroupScreen) Color(0xFF121212) else parsedScreenBgColor)
+        ) {
+            val fullWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+            val fullHeightPx = with(LocalDensity.current) { maxHeight.toPx() }
+
+            // Initialize default canvas size for group (25% of total screen dimensions)
+            LaunchedEffect(fullWidthPx, fullHeightPx) {
+                if (isGraphicsGroupScreen && groupCanvasWidth <= 0f) {
+                    groupCanvasWidth = fullWidthPx * 0.25f
+                    groupCanvasHeight = fullHeightPx * 0.25f
+                    viewModel.updateScreen(activeScreen.copy(canvasWidth = groupCanvasWidth, canvasHeight = groupCanvasHeight))
+                }
+            }
+
+            val effectiveGroupWidth = if (groupCanvasWidth > 0f) groupCanvasWidth else (fullWidthPx * 0.25f)
+            val effectiveGroupHeight = if (groupCanvasHeight > 0f) groupCanvasHeight else (fullHeightPx * 0.25f)
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 1. Pinch-To-Zoom & Two-Finger Pan Gesture Detector
                 .pointerInput(screen.id) {
                     detectTransformGestures { centroid, pan, zoom, _ ->
                         val oldScale = scale
@@ -1047,7 +1297,15 @@ fun GraphicsBlankEditCanvasScreen(
                         onTap = { screenTapOffset ->
                             val modelTap = toModelOffset(screenTapOffset)
 
-                            // Short click/tap: Select item or bring up configuration dialog if already selected
+                            if (isGraphicsGroupScreen && isGroupCanvasSizingMode) {
+                                // If size mode is active and user taps away from BR grip, deactivate size mode & save!
+                                isGroupCanvasSizingMode = false
+                                if (groupCanvasWidth > 0f && groupCanvasHeight > 0f) {
+                                    viewModel.updateScreen(activeScreen.copy(canvasWidth = groupCanvasWidth, canvasHeight = groupCanvasHeight))
+                                }
+                                return@detectTapGestures
+                            }
+
                             val clickedItem = currentItemsList.findLast { item ->
                                 val upperLeftX = item.OffsetX
                                 val upperLeftY = item.OffsetY
@@ -1058,21 +1316,39 @@ fun GraphicsBlankEditCanvasScreen(
                             }
 
                             if (clickedItem != null) {
-                                if (activeItemId == clickedItem.id) {
-                                    // Single click on an already selected item -> Bring up Item Configuration dialog
-                                    debugItemForDialog = clickedItem
+                                val isGroupBox = clickedItem.DisplayType.trim().equals("Group Box", ignoreCase = true)
+                                if (isGroupBox) {
+                                    if (activeItemId == clickedItem.id) {
+                                        // Single click on an ALREADY selected Group Box -> Put Group Box into "Add Items" / "Edit" mode!
+                                        activeEditingGroupId = clickedItem.id
+                                        activeItemId = clickedItem.id
+                                        debugItemForDialog = null
+                                    } else {
+                                        // Single click on an unselected Group Box -> Select it
+                                        activeItemId = clickedItem.id
+                                        activeEditingGroupId = null
+                                        debugItemForDialog = null
+                                    }
                                 } else {
-                                    // Single click on an unselected item -> Select item (show grips & blinking border)
-                                    activeItemId = clickedItem.id
+                                    if (activeItemId == clickedItem.id) {
+                                        // Single click on an ALREADY selected non-group item -> Bring up Item Configuration dialog
+                                        debugItemForDialog = clickedItem
+                                    } else {
+                                        // Single click on an unselected item -> Select item (show grips & blinking border)
+                                        activeItemId = clickedItem.id
+                                        activeEditingGroupId = null
+                                        debugItemForDialog = null
+                                    }
                                 }
                             } else {
                                 activeItemId = null
+                                activeEditingGroupId = null
+                                debugItemForDialog = null
                             }
                         },
                         onDoubleTap = { screenTouchOffset ->
                             val modelTouch = toModelOffset(screenTouchOffset)
 
-                            // Double-click: Bring up the Item Configuration Dialog Box!
                             val doubleTappedItem = currentItemsList.findLast { item ->
                                 val upperLeftX = item.OffsetX
                                 val upperLeftY = item.OffsetY
@@ -1083,14 +1359,21 @@ fun GraphicsBlankEditCanvasScreen(
                             }
 
                             if (doubleTappedItem != null) {
-                                activeItemId = doubleTappedItem.id
-                                debugItemForDialog = doubleTappedItem
+                                val isGroupBox = doubleTappedItem.DisplayType.trim().equals("Group Box", ignoreCase = true)
+                                if (isGroupBox) {
+                                    // Double-click on Group Box -> ALWAYS put into "Edit" mode, NEVER open Item Configuration dialog!
+                                    activeEditingGroupId = doubleTappedItem.id
+                                    activeItemId = doubleTappedItem.id
+                                    debugItemForDialog = null
+                                } else {
+                                    activeItemId = doubleTappedItem.id
+                                    debugItemForDialog = doubleTappedItem
+                                }
                             }
                         },
                         onLongPress = { screenTouchOffset ->
                             val modelTouch = toModelOffset(screenTouchOffset)
 
-                            // Long-press: Bring up the Item Configuration Dialog Box!
                             val longPressedItem = currentItemsList.findLast { item ->
                                 val upperLeftX = item.OffsetX
                                 val upperLeftY = item.OffsetY
@@ -1101,8 +1384,16 @@ fun GraphicsBlankEditCanvasScreen(
                             }
 
                             if (longPressedItem != null) {
-                                activeItemId = longPressedItem.id
-                                debugItemForDialog = longPressedItem
+                                val isGroupBox = longPressedItem.DisplayType.trim().equals("Group Box", ignoreCase = true)
+                                if (isGroupBox) {
+                                    // Long-press on Group Box -> ALWAYS put into "Edit" mode, NEVER open Item Configuration dialog!
+                                    activeEditingGroupId = longPressedItem.id
+                                    activeItemId = longPressedItem.id
+                                    debugItemForDialog = null
+                                } else {
+                                    activeItemId = longPressedItem.id
+                                    debugItemForDialog = longPressedItem
+                                }
                             }
                         }
                     )
@@ -1113,9 +1404,32 @@ fun GraphicsBlankEditCanvasScreen(
                         onDragStart = { screenStartOffset ->
                             hasDraggedSinceTouch = false
                             val modelStart = toModelOffset(screenStartOffset)
+
+                            if (isGraphicsGroupScreen && isGroupCanvasSizingMode) {
+                                val effW = if (groupCanvasWidth > 0f) groupCanvasWidth else 300f
+                                val effH = if (groupCanvasHeight > 0f) groupCanvasHeight else 300f
+                                val brGrip = Offset(effW, effH)
+                                val gripRadiusInModel = 36.dp.toPx() / scale
+
+                                if ((modelStart - brGrip).getDistance() <= gripRadiusInModel) {
+                                    isResizingGroupCanvas = true
+                                    dragStartPoint = modelStart
+                                    return@detectDragGestures
+                                } else {
+                                    // Tapped away from BR grip -> exit size mode
+                                    isGroupCanvasSizingMode = false
+                                    if (groupCanvasWidth > 0f && groupCanvasHeight > 0f) {
+                                        viewModel.updateScreen(activeScreen.copy(canvasWidth = groupCanvasWidth, canvasHeight = groupCanvasHeight))
+                                    }
+                                }
+                            }
+
                             val active = draggingRectOverride ?: currentActiveItemFromDb
 
-                            if (!isPanMode && active != null) {
+                            // When in Group Box Edit Mode, do NOT move or resize the Group Box itself!
+                            val isEditingCurrentGroup = (active != null && active.DisplayType == "Group Box" && active.id == activeEditingGroupId)
+
+                            if (!isPanMode && active != null && !isEditingCurrentGroup) {
                                 val left = active.OffsetX
                                 val top = active.OffsetY
                                 val right = active.OffsetX + active.Width
@@ -1172,11 +1486,15 @@ fun GraphicsBlankEditCanvasScreen(
                             // Check if touch inside any existing item
                             val clickedExisting = if (!isPanMode) {
                                 currentItemsList.findLast { item ->
-                                    val l = item.OffsetX
-                                    val t = item.OffsetY
-                                    val r = item.OffsetX + item.Width
-                                    val b = item.OffsetY + item.Height
-                                    modelStart.x in l..r && modelStart.y in t..b
+                                    if (item.DisplayType == "Group Box" && activeEditingGroupId == item.id) {
+                                        false
+                                    } else {
+                                        val l = item.OffsetX
+                                        val t = item.OffsetY
+                                        val r = item.OffsetX + item.Width
+                                        val b = item.OffsetY + item.Height
+                                        modelStart.x in l..r && modelStart.y in t..b
+                                    }
                                 }
                             } else null
 
@@ -1190,7 +1508,7 @@ fun GraphicsBlankEditCanvasScreen(
                             } else if (isPanMode) {
                                 isPanningCanvas = true
                             } else {
-                                // Touch outside all items in Edit Mode -> Start creating new selection rectangle
+                                // Touch outside all items or inside editing Group Box -> Start creating new selection rectangle
                                 activeItemId = null
                                 draggingRectOverride = null
                                 isDrawingNewRect = true
@@ -1202,6 +1520,13 @@ fun GraphicsBlankEditCanvasScreen(
                             change.consume()
                             hasDraggedSinceTouch = true
                             val modelPos = toModelOffset(change.position)
+
+                            if (isResizingGroupCanvas) {
+                                groupCanvasWidth = modelPos.x.coerceAtLeast(80f)
+                                groupCanvasHeight = modelPos.y.coerceAtLeast(80f)
+                                return@detectDragGestures
+                            }
+
                             val startRect = activeItemStartRect
 
                             if (activeGripIndex >= 0 && startRect != null) {
@@ -1247,6 +1572,22 @@ fun GraphicsBlankEditCanvasScreen(
                                     }
                                 }
 
+                                // Bounding Constraint for Sub-Items inside a Group Box
+                                if (startRect.parentCustomGroupId != null) {
+                                    val parentGroup = itemsList.find { it.id == startRect.parentCustomGroupId }
+                                    if (parentGroup != null) {
+                                        val pL = parentGroup.OffsetX
+                                        val pT = parentGroup.OffsetY
+                                        val pR = parentGroup.OffsetX + parentGroup.Width
+                                        val pB = parentGroup.OffsetY + parentGroup.Height
+
+                                        nL = nL.safeCoerceIn(pL, pR - 10f)
+                                        nT = nT.safeCoerceIn(pT, pB - 10f)
+                                        nW = nW.coerceAtMost((pR - nL).coerceAtLeast(10f))
+                                        nH = nH.coerceAtMost((pB - nT).coerceAtLeast(10f))
+                                    }
+                                }
+
                                 draggingRectOverride = startRect.copy(
                                     OffsetX = nL,
                                     OffsetY = nT,
@@ -1255,8 +1596,22 @@ fun GraphicsBlankEditCanvasScreen(
                                 )
                             } else if (isMovingActiveItem && startRect != null) {
                                 // Direct touch tracking for moving active rectangle in model space
-                                val newL = (modelPos.x - touchOffsetInRect.x).coerceAtLeast(0f)
-                                val newT = (modelPos.y - touchOffsetInRect.y).coerceAtLeast(0f)
+                                var newL = (modelPos.x - touchOffsetInRect.x).coerceAtLeast(0f)
+                                var newT = (modelPos.y - touchOffsetInRect.y).coerceAtLeast(0f)
+
+                                // Bounding Constraint for Sub-Items inside a Group Box
+                                if (startRect.parentCustomGroupId != null) {
+                                    val parentGroup = itemsList.find { it.id == startRect.parentCustomGroupId }
+                                    if (parentGroup != null) {
+                                        val pL = parentGroup.OffsetX
+                                        val pT = parentGroup.OffsetY
+                                        val pR = parentGroup.OffsetX + parentGroup.Width
+                                        val pB = parentGroup.OffsetY + parentGroup.Height
+
+                                        newL = newL.safeCoerceIn(pL, (pR - startRect.Width).coerceAtLeast(pL))
+                                        newT = newT.safeCoerceIn(pT, (pB - startRect.Height).coerceAtLeast(pT))
+                                    }
+                                }
 
                                 draggingRectOverride = startRect.copy(
                                     OffsetX = newL,
@@ -1273,24 +1628,113 @@ fun GraphicsBlankEditCanvasScreen(
                             val current = dragCurrentPoint
                             val dragged = draggingRectOverride
 
+                            if (isResizingGroupCanvas) {
+                                isResizingGroupCanvas = false
+                                isGroupCanvasSizingMode = false
+                                if (groupCanvasWidth > 0f && groupCanvasHeight > 0f) {
+                                    viewModel.updateScreen(activeScreen.copy(canvasWidth = groupCanvasWidth, canvasHeight = groupCanvasHeight))
+                                }
+                                return@detectDragGestures
+                            }
+
                             if (hasDraggedSinceTouch) {
                                 // User dragged during gesture -> update or insert item
                                 if (dragged != null && (isMovingActiveItem || activeGripIndex >= 0)) {
                                     viewModel.updateGraphicsScreenItem(dragged)
+
+                                    if (dragged.DisplayType == "Group Box" && activeItemStartRect != null) {
+                                        val startRect = activeItemStartRect!!
+                                        if (isMovingActiveItem) {
+                                            // Moving Group Box -> Shift all sub-items by position delta
+                                            val deltaX = dragged.OffsetX - startRect.OffsetX
+                                            val deltaY = dragged.OffsetY - startRect.OffsetY
+                                            if (deltaX != 0f || deltaY != 0f) {
+                                                val subItemsToShift = currentItemsList.filter { it.parentCustomGroupId == dragged.id }
+                                                subItemsToShift.forEach { sub ->
+                                                    viewModel.updateGraphicsScreenItem(
+                                                        sub.copy(
+                                                            OffsetX = sub.OffsetX + deltaX,
+                                                            OffsetY = sub.OffsetY + deltaY
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        } else if (activeGripIndex >= 0) {
+                                            // Resizing Group Box via Grips -> Proportional scaling of sub-items
+                                            val sL = startRect.OffsetX
+                                            val sT = startRect.OffsetY
+                                            val sW = if (startRect.Width > 0f) startRect.Width else 1f
+                                            val sH = if (startRect.Height > 0f) startRect.Height else 1f
+
+                                            val scaleX = dragged.Width / sW
+                                            val scaleY = dragged.Height / sH
+
+                                            val subItemsToScale = currentItemsList.filter { it.parentCustomGroupId == dragged.id }
+                                            subItemsToScale.forEach { sub ->
+                                                val relX = sub.OffsetX - sL
+                                                val relY = sub.OffsetY - sT
+                                                val newSubX = dragged.OffsetX + (relX * scaleX)
+                                                val newSubY = dragged.OffsetY + (relY * scaleY)
+                                                val newSubW = (sub.Width * scaleX).coerceAtLeast(10f)
+                                                val newSubH = (sub.Height * scaleY).coerceAtLeast(10f)
+
+                                                viewModel.updateGraphicsScreenItem(
+                                                    sub.copy(
+                                                        OffsetX = newSubX,
+                                                        OffsetY = newSubY,
+                                                        Width = newSubW,
+                                                        Height = newSubH
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
                                 } else if (isDrawingNewRect && start != null && current != null) {
-                                    val left = minOf(start.x, current.x).coerceAtLeast(0f)
-                                    val top = minOf(start.y, current.y).coerceAtLeast(0f)
-                                    val width = abs(current.x - start.x)
-                                    val height = abs(current.y - start.y)
+                                    var left = minOf(start.x, current.x).coerceAtLeast(0f)
+                                    var top = minOf(start.y, current.y).coerceAtLeast(0f)
+                                    var width = abs(current.x - start.x)
+                                    var height = abs(current.y - start.y)
+
+                                    if (isGraphicsGroupScreen) {
+                                        val maxGW = if (groupCanvasWidth > 0f) groupCanvasWidth else 300f
+                                        val maxGH = if (groupCanvasHeight > 0f) groupCanvasHeight else 300f
+
+                                        left = left.safeCoerceIn(0f, (maxGW - 10f).coerceAtLeast(0f))
+                                        top = top.safeCoerceIn(0f, (maxGH - 10f).coerceAtLeast(0f))
+                                        width = width.coerceAtMost((maxGW - left).coerceAtLeast(10f))
+                                        height = height.coerceAtMost((maxGH - top).coerceAtLeast(10f))
+                                    }
+
+                                    val editingGroup = if (activeEditingGroupId != null) itemsList.find { it.id == activeEditingGroupId } else null
+
+                                    val targetGroup = editingGroup ?: itemsList.find {
+                                        it.DisplayType == "Group Box" &&
+                                        start.x in it.OffsetX..(it.OffsetX + it.Width) &&
+                                        start.y in it.OffsetY..(it.OffsetY + it.Height)
+                                    }
+
+                                    if (targetGroup != null) {
+                                        val pL = targetGroup.OffsetX
+                                        val pT = targetGroup.OffsetY
+                                        val pR = targetGroup.OffsetX + targetGroup.Width
+                                        val pB = targetGroup.OffsetY + targetGroup.Height
+
+                                        left = left.safeCoerceIn(pL, (pR - 10f).coerceAtLeast(pL))
+                                        top = top.safeCoerceIn(pT, (pB - 10f).coerceAtLeast(pT))
+                                        width = width.coerceAtMost((pR - left).coerceAtLeast(10f))
+                                        height = height.coerceAtMost((pB - top).coerceAtLeast(10f))
+                                    }
 
                                     if (width >= 10f && height >= 10f) {
                                         val newRect = GraphicsScreenItems(
                                             parentScreenId = screen.id,
+                                            parentCustomGroupId = targetGroup?.id,
                                             DisplayType = "Rectangle",
                                             OffsetX = left,
                                             OffsetY = top,
                                             Width = width,
-                                            Height = height
+                                            Height = height,
+                                            isShowTagName = true
                                         )
                                         viewModel.insertGraphicsScreenItem(newRect) { newId ->
                                             val createdItem = newRect.copy(id = newId)
@@ -1325,21 +1769,151 @@ fun GraphicsBlankEditCanvasScreen(
                 }
         ) {
             // Screen Background Layer (Always drawn FIRST at bottom layer, non-interactive)
-            if (activeScreen.backgroundType == "Image" && screenBgBitmap != null) {
-                Image(
-                    bitmap = screenBgBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.fillMaxSize()
-                )
+            if (isGraphicsGroupScreen) {
+                val canvasWidthDp = with(LocalDensity.current) { effectiveGroupWidth.toDp() }
+                val canvasHeightDp = with(LocalDensity.current) { effectiveGroupHeight.toDp() }
+
+                Box(
+                    modifier = Modifier
+                        .graphicsLayer {
+                            translationX = panOffset.x
+                            translationY = panOffset.y
+                            scaleX = scale
+                            scaleY = scale
+                            transformOrigin = TransformOrigin(0f, 0f)
+                        }
+                        .size(width = canvasWidthDp, height = canvasHeightDp)
+                        .background(parsedScreenBgColor)
+                ) {
+                    if (activeScreen.backgroundType == "Image" && screenBgFile != null && screenBgFile.exists()) {
+                        if (isAnimatedFileName(screenBgFile.name)) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(screenBgFile)
+                                    .crossfade(true)
+                                    .build(),
+                                imageLoader = imageLoader,
+                                contentDescription = null,
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else if (screenBgBitmap != null) {
+                            Image(
+                                bitmap = screenBgBitmap,
+                                contentDescription = null,
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                }
+            } else if (activeScreen.backgroundType == "Image" && screenBgFile != null && screenBgFile.exists()) {
+                if (isAnimatedFileName(screenBgFile.name)) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(screenBgFile)
+                            .crossfade(true)
+                            .build(),
+                        imageLoader = imageLoader,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (screenBgBitmap != null) {
+                    Image(
+                        bitmap = screenBgBitmap,
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
+            // 1. Overlay Fitted GUI Controls on Canvas for Configured Items (Middle Layer)
+            val density = LocalDensity.current
+            screenWithItems?.items?.forEach { itemWithTag ->
+                val item = itemWithTag.item
+                var displayItem = if (item.id == displayActiveItem?.id) (displayActiveItem ?: item) else item
+
+                // Real-time live proportional scaling for sub-items during active Group Box dragging/resizing
+                if (item.parentCustomGroupId != null && displayActiveItem != null && displayActiveItem.DisplayType == "Group Box" && displayActiveItem.id == item.parentCustomGroupId && activeItemStartRect != null) {
+                    val startGroup = activeItemStartRect!!
+                    val sL = startGroup.OffsetX
+                    val sT = startGroup.OffsetY
+                    val sW = if (startGroup.Width > 0f) startGroup.Width else 1f
+                    val sH = if (startGroup.Height > 0f) startGroup.Height else 1f
+
+                    val scaleX = displayActiveItem.Width / sW
+                    val scaleY = displayActiveItem.Height / sH
+
+                    val relX = item.OffsetX - sL
+                    val relY = item.OffsetY - sT
+
+                    val liveX = displayActiveItem.OffsetX + (relX * scaleX)
+                    val liveY = displayActiveItem.OffsetY + (relY * scaleY)
+                    val liveW = (item.Width * scaleX).coerceAtLeast(10f)
+                    val liveH = (item.Height * scaleY).coerceAtLeast(10f)
+
+                    displayItem = item.copy(OffsetX = liveX, OffsetY = liveY, Width = liveW, Height = liveH)
+                }
+
+                if (displayItem.DisplayType.isNotEmpty() && displayItem.DisplayType != "Rectangle") {
+                    val widthDp = with(density) { displayItem.Width.toDp() }
+                    val heightDp = with(density) { displayItem.Height.toDp() }
+
+                    val imgConfig = GraphicsImageConfig.fromString(displayItem.configStr)
+                    val oxTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.offsetXTagId }?.tag
+                    val oyTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.offsetYTagId }?.tag
+                    val rotTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.rotationTagId }?.tag
+
+                    val extraX = oxTag?.storedValue?.toFloatOrNull() ?: 0f
+                    val extraY = oyTag?.storedValue?.toFloatOrNull() ?: 0f
+                    val rotDeg = rotTag?.storedValue?.toFloatOrNull() ?: 0f
+
+                    GraphicsItemWidget(
+                        item = displayItem,
+                        tag = itemWithTag.tag,
+                        allScreens = allScreens,
+                        hierarchy = hierarchy,
+                        enabled = false,
+                        onShowSnackbar = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+                        modifier = Modifier
+                            .graphicsLayer {
+                                translationX = (displayItem.OffsetX + extraX) * scale + panOffset.x
+                                translationY = (displayItem.OffsetY + extraY) * scale + panOffset.y
+                                rotationZ = rotDeg
+                                scaleX = scale
+                                scaleY = scale
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                            }
+                            .size(width = widthDp, height = heightDp)
+                    )
+                }
+            }
+
+            // 2. Foreground Canvas Layer for Selection Rectangles, Grips & In-Progress Shapes (Top Layer)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 withTransform({
                     translate(panOffset.x, panOffset.y)
                     scale(scale, scale, pivot = Offset.Zero)
                 }) {
                     val activeId = displayActiveItem?.id
+
+                    // 0. Draw Transparent Background Outline Rectangle
+                    if (activeScreen.backgroundType == "Transparent") {
+                        val boundsW = if (isGraphicsGroupScreen && effectiveGroupWidth > 0f) effectiveGroupWidth else fullWidthPx
+                        val boundsH = if (isGraphicsGroupScreen && effectiveGroupHeight > 0f) effectiveGroupHeight else fullHeightPx
+
+                        drawRect(
+                            color = Color(0xFF00BCD4),
+                            topLeft = Offset.Zero,
+                            size = Size(boundsW, boundsH),
+                            style = Stroke(
+                                width = 2.dp.toPx() / scale,
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f / scale, 12f / scale), 0f)
+                            )
+                        )
+                    }
 
                     // 1. Draw Inactive Selection Rectangles (for plain rectangles only)
                     itemsList.filter { it.id != activeId && (it.DisplayType.isEmpty() || it.DisplayType == "Rectangle") }.forEach { item ->
@@ -1392,92 +1966,178 @@ fun GraphicsBlankEditCanvasScreen(
                         val rectOffset = Offset(item.OffsetX, item.OffsetY)
                         val rectSize = Size(item.Width, item.Height)
 
-                        // Highlighted Blinking Fill & Border
-                        drawRect(
-                            color = Color(0xFFFF3D00).copy(alpha = 0.12f * alphaAnim),
-                            topLeft = rectOffset,
-                            size = rectSize
-                        )
-                        drawRect(
-                            color = Color(0xFFFF3D00).copy(alpha = alphaAnim),
-                            topLeft = rectOffset,
-                            size = rectSize,
-                            style = Stroke(width = 3.5.dp.toPx() / scale)
-                        )
+                        val isEditingGroupMode = (item.DisplayType == "Group Box" && activeEditingGroupId == item.id)
 
-                        // Corner Grips (TL, TR, BL, BR)
-                        val left = item.OffsetX
-                        val top = item.OffsetY
-                        val right = item.OffsetX + item.Width
-                        val bottom = item.OffsetY + item.Height
-                        val gripRadius = 8.dp.toPx() / scale
-
-                        val grips = listOf(
-                            Offset(left, top),       // Top-Left
-                            Offset(right, top),      // Top-Right
-                            Offset(left, bottom),    // Bottom-Left
-                            Offset(right, bottom)    // Bottom-Right
-                        )
-
-                        grips.forEach { gripOffset ->
-                            drawCircle(
-                                color = Color.White,
-                                radius = gripRadius + (3.dp.toPx() / scale),
-                                center = gripOffset
+                        if (isEditingGroupMode) {
+                            // Group Box Edit Mode: Thicker blinking border in bright green, NO corner grips!
+                            drawRect(
+                                color = Color(0xFF00E676).copy(alpha = 0.2f * alphaAnim),
+                                topLeft = rectOffset,
+                                size = rectSize
                             )
-                            drawCircle(
-                                color = Color(0xFFFF3D00),
-                                radius = gripRadius,
-                                center = gripOffset
+                            drawRect(
+                                color = Color(0xFF00E676).copy(alpha = alphaAnim),
+                                topLeft = rectOffset,
+                                size = rectSize,
+                                style = Stroke(width = 6.dp.toPx() / scale)
                             )
+                        } else {
+                            // Normal Selection Mode: Standard blinking border + 4 Corner Grips
+                            drawRect(
+                                color = Color(0xFFFF3D00).copy(alpha = 0.12f * alphaAnim),
+                                topLeft = rectOffset,
+                                size = rectSize
+                            )
+                            drawRect(
+                                color = Color(0xFFFF3D00).copy(alpha = alphaAnim),
+                                topLeft = rectOffset,
+                                size = rectSize,
+                                style = Stroke(width = 3.5.dp.toPx() / scale)
+                            )
+
+                            // Corner Grips (TL, TR, BL, BR)
+                            val left = item.OffsetX
+                            val top = item.OffsetY
+                            val right = item.OffsetX + item.Width
+                            val bottom = item.OffsetY + item.Height
+                            val gripRadius = 8.dp.toPx() / scale
+
+                            val grips = listOf(
+                                Offset(left, top),       // Top-Left
+                                Offset(right, top),      // Top-Right
+                                Offset(left, bottom),    // Bottom-Left
+                                Offset(right, bottom)    // Bottom-Right
+                            )
+
+                            grips.forEach { gripOffset ->
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = gripRadius + (3.dp.toPx() / scale),
+                                    center = gripOffset
+                                )
+                                drawCircle(
+                                    color = Color(0xFFFF3D00),
+                                    radius = gripRadius,
+                                    center = gripOffset
+                                )
+                            }
                         }
+                    }
+
+                    // 4. Draw Active Group Canvas Size Selection Rectangle & Bottom-Right Grip
+                    if (isGraphicsGroupScreen && isGroupCanvasSizingMode) {
+                        val gOffset = Offset.Zero
+                        val gSize = Size(effectiveGroupWidth, effectiveGroupHeight)
+
+                        drawRect(
+                            color = Color(0xFF00BCD4).copy(alpha = 0.15f * alphaAnim),
+                            topLeft = gOffset,
+                            size = gSize
+                        )
+                        drawRect(
+                            color = Color(0xFF00BCD4).copy(alpha = alphaAnim),
+                            topLeft = gOffset,
+                            size = gSize,
+                            style = Stroke(width = 4.dp.toPx() / scale)
+                        )
+
+                        // Bottom-Right Grip for resizing Group Canvas Area
+                        val brGrip = Offset(effectiveGroupWidth, effectiveGroupHeight)
+                        val gripRadius = 12.dp.toPx() / scale
+
+                        drawCircle(
+                            color = Color.White,
+                            radius = gripRadius + (4.dp.toPx() / scale),
+                            center = brGrip
+                        )
+                        drawCircle(
+                            color = Color(0xFF00BCD4),
+                            radius = gripRadius,
+                            center = brGrip
+                        )
                     }
                 }
             }
 
-            // Overlay Fitted GUI Controls on Canvas for Configured Items
-            val density = LocalDensity.current
-            screenWithItems?.items?.forEach { itemWithTag ->
-                val item = itemWithTag.item
-                val displayItem = if (item.id == displayActiveItem?.id) (displayActiveItem ?: item) else item
-
-                if (displayItem.DisplayType.isNotEmpty() && displayItem.DisplayType != "Rectangle") {
-                    val widthDp = with(density) { displayItem.Width.toDp() }
-                    val heightDp = with(density) { displayItem.Height.toDp() }
-
-                    val imgConfig = GraphicsImageConfig.fromString(displayItem.configStr)
-                    val oxTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.offsetXTagId }?.tag
-                    val oyTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.offsetYTagId }?.tag
-                    val rotTag = hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == imgConfig.rotationTagId }?.tag
-
-                    val extraX = oxTag?.storedValue?.toFloatOrNull() ?: 0f
-                    val extraY = oyTag?.storedValue?.toFloatOrNull() ?: 0f
-                    val rotDeg = rotTag?.storedValue?.toFloatOrNull() ?: 0f
-
-                    GraphicsItemWidget(
-                        item = displayItem,
-                        tag = itemWithTag.tag,
-                        allScreens = allScreens,
-                        hierarchy = hierarchy,
-                        enabled = false,
-                        onShowSnackbar = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+            // Group Box Edit Mode Banner Overlay
+            if (activeEditingGroupId != null) {
+                val editingGroup = itemsList.find { it.id == activeEditingGroupId }
+                if (editingGroup != null) {
+                    val groupName = editingGroup.configStr.ifBlank { "Group Box #${editingGroup.id}" }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF00E676),
+                        contentColor = Color.Black,
+                        shadowElevation = 8.dp,
                         modifier = Modifier
-                            .graphicsLayer {
-                                translationX = (displayItem.OffsetX + extraX) * scale + panOffset.x
-                                translationY = (displayItem.OffsetY + extraY) * scale + panOffset.y
-                                rotationZ = rotDeg
-                                scaleX = scale
-                                scaleY = scale
-                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                            .align(Alignment.TopCenter)
+                            .padding(top = 8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Editing Group Box: \"$groupName\"", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            // Config Button (opens ScreenConfigDialog to configure group background)
+                            OutlinedButton(
+                                onClick = {
+                                    val cleanName = editingGroup.configStr.trim()
+                                    val libGroupScreen = allScreens.find {
+                                        it.Type == Screens.TYPE_GRAPHICS_GROUP &&
+                                        (it.Name.equals(cleanName, ignoreCase = true) || it.id.toString() == cleanName)
+                                    }
+                                    groupScreenForConfigDialog = libGroupScreen ?: Screens(
+                                        id = 0,
+                                        Name = cleanName.ifBlank { "Group Box" },
+                                        Type = Screens.TYPE_GRAPHICS_GROUP
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Config", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                             }
-                            .size(width = widthDp, height = heightDp)
-                    )
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            // Delete Group Button
+                            Button(
+                                onClick = { groupToDelete = editingGroup },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = Color.White),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Icon(Icons.Rounded.Delete, contentDescription = "Delete Group", modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Delete", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+
+                            Spacer(modifier = Modifier.width(4.dp))
+
+                            // Done Button
+                            Button(
+                                onClick = { activeEditingGroupId = null },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("Done", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
         }
     }
+    }
 
-    // Screen Config Dialog Box
+    // Screen Config Dialog Box for Main Screen
     if (showScreenConfigDialog) {
         ScreenConfigDialog(
             screen = activeScreen,
@@ -1492,27 +2152,119 @@ fun GraphicsBlankEditCanvasScreen(
         )
     }
 
-    // Item Config Dialog Box
-    debugItemForDialog?.let { dialogItem ->
-        GraphicsItemConfigDialog(
-            dialogItem = dialogItem,
-            currentScreenId = activeScreen.id,
-            allScreens = allScreens,
-            hierarchy = hierarchy,
-            dataTypes = dataTypes,
-            viewModel = viewModel,
-            onDismiss = { debugItemForDialog = null },
-            onSave = { updatedItem ->
-                viewModel.updateGraphicsScreenItem(updatedItem)
-                debugItemForDialog = null
-            },
-            onDelete = { deletedItem ->
-                viewModel.deleteGraphicsScreenItem(deletedItem)
-                if (activeItemId == deletedItem.id) activeItemId = null
-                debugItemForDialog = null
+    // Group Background Config Dialog Box
+    groupScreenForConfigDialog?.let { groupScreen ->
+        val activeEditingGroup = itemsList.find { it.id == activeEditingGroupId }
+        ScreenConfigDialog(
+            screen = groupScreen,
+            context = context,
+            screenWidthPx = activeEditingGroup?.Width?.toInt() ?: 1080,
+            screenHeightPx = activeEditingGroup?.Height?.toInt() ?: 1920,
+            onDismiss = { groupScreenForConfigDialog = null },
+            onSave = { updatedGroupScreen ->
+                if (updatedGroupScreen.id > 0L) {
+                    viewModel.updateScreen(updatedGroupScreen)
+                } else {
+                    val groupName = activeEditingGroup?.configStr?.ifBlank { "Group Box" } ?: "Group Box"
+                    viewModel.updateScreen(updatedGroupScreen.copy(Name = groupName))
+                }
+                groupScreenForConfigDialog = null
+                scope.launch { snackbarHostState.showSnackbar("Updated background for Group Box '${activeEditingGroup?.configStr}'.") }
             }
         )
     }
+
+    // Group Delete Confirmation Dialog Box
+    groupToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { groupToDelete = null },
+            title = { Text("Delete Group Box", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to delete Group Box '${target.configStr}' and all its items?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteGraphicsScreenItem(target)
+                        activeEditingGroupId = null
+                        if (activeItemId == target.id) activeItemId = null
+                        groupToDelete = null
+                        scope.launch { snackbarHostState.showSnackbar("Deleted Group Box '${target.configStr}'.") }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { groupToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Item Config Dialog Box (ONLY for non-Group Box items)
+    debugItemForDialog?.let { dialogItem ->
+        if (dialogItem.DisplayType.trim().equals("Group Box", ignoreCase = true)) {
+            debugItemForDialog = null
+        } else {
+            GraphicsItemConfigDialog(
+                dialogItem = dialogItem,
+                currentScreenId = activeScreen.id,
+                allScreens = allScreens,
+                existingItems = itemsList,
+                hierarchy = hierarchy,
+                dataTypes = dataTypes,
+                viewModel = viewModel,
+                onDismiss = { debugItemForDialog = null },
+                onSave = { updatedItem ->
+                    viewModel.updateGraphicsScreenItem(updatedItem)
+                    debugItemForDialog = null
+                },
+                onDelete = { deletedItem ->
+                    viewModel.deleteGraphicsScreenItem(deletedItem)
+                    if (activeItemId == deletedItem.id) activeItemId = null
+                    debugItemForDialog = null
+                }
+            )
+        }
+    }
+}
+
+fun generateUniqueGroupBoxName(baseName: String, existingItems: List<GraphicsScreenItems>): String {
+    val rawClean = baseName.ifBlank { "Group" }.replace(Regex("\\d+$"), "").trim()
+    val cleanBase = if (rawClean.isBlank()) "Group" else rawClean
+    val groupNameRegex = Regex("^${Regex.escape(cleanBase)}(\\d+)$", RegexOption.IGNORE_CASE)
+
+    val existingNames = existingItems.filter { it.DisplayType == "Group Box" }.map { it.configStr.trim().lowercase() }.toSet()
+
+    var maxNum = 0
+    var foundNumbered = false
+
+    existingItems.filter { it.DisplayType == "Group Box" }.forEach { item ->
+        val name = item.configStr.trim()
+        if (name.equals(cleanBase, ignoreCase = true)) {
+            foundNumbered = true
+            if (maxNum < 1) maxNum = 1
+        }
+        val match = groupNameRegex.find(name)
+        if (match != null) {
+            val num = match.groupValues[1].toIntOrNull()
+            if (num != null) {
+                foundNumbered = true
+                if (num > maxNum) maxNum = num
+            }
+        }
+    }
+
+    var nextNum = if (foundNumbered) maxNum + 1 else 1
+    var candidateName = "$cleanBase$nextNum"
+
+    while (existingNames.contains(candidateName.lowercase())) {
+        nextNum++
+        candidateName = "$cleanBase$nextNum"
+    }
+
+    return candidateName
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1521,6 +2273,7 @@ fun GraphicsItemConfigDialog(
     dialogItem: GraphicsScreenItems,
     currentScreenId: Long,
     allScreens: List<Screens>,
+    existingItems: List<GraphicsScreenItems> = emptyList(),
     hierarchy: List<NodeWithPacketsAndTags>,
     dataTypes: List<DataTypes>,
     viewModel: MainViewModel,
@@ -1530,14 +2283,37 @@ fun GraphicsItemConfigDialog(
 ) {
     var showTagPicker by remember { mutableStateOf(false) }
 
-    // Initial Category: Data (default for new items), Graphics, or Other
+    val graphicsGroupsWithItems by viewModel.graphicsGroupsWithItems.collectAsStateWithLifecycle()
+    val libraryGroups = remember(graphicsGroupsWithItems) {
+        graphicsGroupsWithItems.map { it.screen }
+    }
+    var selectedLibraryGroupId by remember {
+        mutableLongStateOf(libraryGroups.firstOrNull()?.id ?: 0L)
+    }
+
+    val selectedLibGroup = remember(libraryGroups, selectedLibraryGroupId) {
+        libraryGroups.find { it.id == selectedLibraryGroupId }
+    }
+    val defaultLibName = selectedLibGroup?.Name ?: "Group"
+
+    // Initial Category: Data (default for new items), Image, Group Box, or Other
     var selectedCategory by remember(dialogItem.id, dialogItem.parentTagId, dialogItem.DisplayType) {
         val cat = when {
+            dialogItem.DisplayType == "Group Box" -> "Group Box"
             dialogItem.DisplayType == "Goto Page Button" || dialogItem.DisplayType == "TBD" -> "Other"
-            dialogItem.DisplayType == "Image" -> "Graphics"
+            dialogItem.DisplayType == "Image" -> "Image"
             else -> "Data"
         }
         mutableStateOf(cat)
+    }
+
+    var groupNameText by remember(dialogItem.id, dialogItem.configStr) {
+        val initial = if (dialogItem.DisplayType == "Group Box") {
+            dialogItem.configStr.ifBlank { generateUniqueGroupBoxName(defaultLibName, existingItems) }
+        } else {
+            generateUniqueGroupBoxName(defaultLibName, existingItems)
+        }
+        mutableStateOf(initial)
     }
 
     var selectedTagId by remember(dialogItem.id, dialogItem.parentTagId) {
@@ -1566,6 +2342,20 @@ fun GraphicsItemConfigDialog(
 
     var selectedRotationTagId by remember(dialogItem.id, dialogItem.configStr) {
         mutableStateOf(imageConfig.rotationTagId)
+    }
+
+    val isAnimatedFileType = remember(selectedConfigStr) {
+        val lower = selectedConfigStr.lowercase()
+        lower.endsWith(".gif") || lower.endsWith(".webp")
+    }
+
+    var isAnimatedSelected by remember(dialogItem.id, dialogItem.configStr, selectedConfigStr) {
+        val initial = if (dialogItem.DisplayType == "Image" && imageConfig.fileName == selectedConfigStr) {
+            imageConfig.isAnimated || isAnimatedFileType
+        } else {
+            isAnimatedFileType
+        }
+        mutableStateOf(initial)
     }
 
     var activeTagPickingTarget by remember { mutableStateOf("itemTag") } // "itemTag", "offsetX", "offsetY", "rotation"
@@ -1636,8 +2426,12 @@ fun GraphicsItemConfigDialog(
     }
 
     val dataTypeShortName = if (isBitTag) "B" else packetDataType.shortName.ifEmpty { packetDataType.description }
-    val displayOptions = remember(dataTypeShortName, packetDataType) {
-        DisplayTypes.getOptionsForDataType(dataTypeShortName)
+    val displayOptions = remember(dataTypeShortName, packetDataType, selectedTag) {
+        if (selectedTag == null) {
+            listOf("Default (Numeric entry)", "On_Button", "Off_Button", "Toggle_Button", "Switch", "CheckBox", "Radio_Button")
+        } else {
+            DisplayTypes.getOptionsForDataType(dataTypeShortName)
+        }
     }
 
     var selectedDisplayType by remember(dialogItem.id, dialogItem.DisplayType, displayOptions, selectedCategory) {
@@ -1650,7 +2444,7 @@ fun GraphicsItemConfigDialog(
     }
 
     var isShowTagName by remember(dialogItem.id, dialogItem.isShowTagName) {
-        mutableStateOf(dialogItem.isShowTagName)
+        mutableStateOf(if (dialogItem.id == 0L) true else dialogItem.isShowTagName)
     }
 
     var showImagePickerDialog by remember { mutableStateOf(false) }
@@ -1675,14 +2469,22 @@ fun GraphicsItemConfigDialog(
         }
     }
 
+    val dialogScrollState = rememberScrollState()
+    val canScrollDialogDown by remember {
+        derivedStateOf { dialogScrollState.canScrollForward }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Item Configuration", fontWeight = FontWeight.Bold) },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(dialogScrollState)
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                 // Group Box labeled "Display Type"
                 OutlinedCard(
                     shape = RoundedCornerShape(8.dp),
@@ -1701,7 +2503,7 @@ fun GraphicsItemConfigDialog(
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -1718,22 +2520,50 @@ fun GraphicsItemConfigDialog(
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { selectedCategory = "Graphics" }
+                                modifier = Modifier.clickable {
+                                    selectedCategory = "Image"
+                                    selectedDisplayType = "Image"
+                                }
                             ) {
                                 RadioButton(
-                                    selected = selectedCategory == "Graphics",
+                                    selected = selectedCategory == "Image",
                                     onClick = {
-                                        selectedCategory = "Graphics"
+                                        selectedCategory = "Image"
                                         selectedDisplayType = "Image"
                                     }
                                 )
                                 Spacer(modifier = Modifier.width(2.dp))
-                                Text("Graphics", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                Text("Image", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             }
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { selectedCategory = "Other" }
+                                modifier = Modifier.clickable {
+                                    selectedCategory = "Group Box"
+                                    selectedDisplayType = "Group Box"
+                                    val currentLibName = libraryGroups.find { it.id == selectedLibraryGroupId }?.Name ?: "Group"
+                                    groupNameText = generateUniqueGroupBoxName(currentLibName, existingItems)
+                                }
+                            ) {
+                                RadioButton(
+                                    selected = selectedCategory == "Group Box",
+                                    onClick = {
+                                        selectedCategory = "Group Box"
+                                        selectedDisplayType = "Group Box"
+                                        val currentLibName = libraryGroups.find { it.id == selectedLibraryGroupId }?.Name ?: "Group"
+                                        groupNameText = generateUniqueGroupBoxName(currentLibName, existingItems)
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Group Box", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable {
+                                    selectedCategory = "Other"
+                                    selectedDisplayType = "Goto Page Button"
+                                }
                             ) {
                                 RadioButton(
                                     selected = selectedCategory == "Other",
@@ -1935,7 +2765,90 @@ fun GraphicsItemConfigDialog(
                             }
                         }
 
-                        if (selectedCategory == "Graphics") {
+                        if (selectedCategory == "Group Box") {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            // Show Group Name Checkbox Row
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isShowTagName = !isShowTagName }
+                                    .padding(vertical = 2.dp)
+                            ) {
+                                Checkbox(
+                                    checked = isShowTagName,
+                                    onCheckedChange = { isShowTagName = it }
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Show group name",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text("Select Group from Library", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                            var libraryDropdownExpanded by remember { mutableStateOf(false) }
+
+                            val currentSelectedLibGroup = libraryGroups.find { it.id == selectedLibraryGroupId }
+                            val libGroupTitle = currentSelectedLibGroup?.Name ?: "(No groups in Groups Library)"
+
+                            ExposedDropdownMenuBox(
+                                expanded = libraryDropdownExpanded,
+                                onExpandedChange = { libraryDropdownExpanded = !libraryDropdownExpanded },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = libGroupTitle,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = libraryDropdownExpanded) },
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = libraryDropdownExpanded,
+                                    onDismissRequest = { libraryDropdownExpanded = false }
+                                ) {
+                                    libraryGroups.forEach { libGroup ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Icon(Icons.Rounded.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                                    Text(libGroup.Name, fontWeight = FontWeight.Bold)
+                                                }
+                                            },
+                                            onClick = {
+                                                selectedLibraryGroupId = libGroup.id
+                                                groupNameText = generateUniqueGroupBoxName(libGroup.Name, existingItems)
+                                                libraryDropdownExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text("Group Name", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+
+                            OutlinedTextField(
+                                value = groupNameText,
+                                onValueChange = { groupNameText = it },
+                                singleLine = true,
+                                placeholder = { Text("e.g. Pump Subsystem") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        if (selectedCategory == "Image") {
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                             Text("Graphics Image File", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
@@ -1944,7 +2857,9 @@ fun GraphicsItemConfigDialog(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showImagePickerDialog = true }
                             ) {
                                 Column(modifier = Modifier.padding(10.dp)) {
                                     Text(
@@ -1952,6 +2867,29 @@ fun GraphicsItemConfigDialog(
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = if (selectedConfigStr.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
                                         color = if (selectedConfigStr.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+
+                            if (isAnimatedFileType && selectedConfigStr.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { isAnimatedSelected = !isAnimatedSelected }
+                                        .padding(vertical = 2.dp)
+                                ) {
+                                    Checkbox(
+                                        checked = isAnimatedSelected,
+                                        onCheckedChange = { isAnimatedSelected = it }
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Animate",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
@@ -2120,7 +3058,15 @@ fun GraphicsItemConfigDialog(
                     }
                 }
             }
-        },
+
+            ScrollMoreDownIndicator(
+                canScrollMore = canScrollDialogDown,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp)
+            )
+        }
+    },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -2137,29 +3083,41 @@ fun GraphicsItemConfigDialog(
                         val finalTagId = if (selectedCategory == "Data") selectedTagId else null
                         val finalDisplayType = when (selectedCategory) {
                             "Data" -> selectedDisplayType
+                            "Image" -> "Image"
+                            "Group Box" -> "Group Box"
                             "Other" -> selectedDisplayType
-                            else -> "Image"
+                            else -> "Rectangle"
                         }
                         val finalConfigStr = when (selectedCategory) {
-                            "Other" -> if (selectedDisplayType == "Goto Page Button") selectedTargetScreenId.toString() else ""
-                            "Graphics" -> GraphicsImageConfig(
+                            "Group Box" -> groupNameText.ifBlank { "Group Box #${dialogItem.id}" }
+                            "Image" -> GraphicsImageConfig(
                                 fileName = selectedConfigStr,
                                 offsetXTagId = selectedOffsetXTagId,
                                 offsetYTagId = selectedOffsetYTagId,
-                                rotationTagId = selectedRotationTagId
+                                rotationTagId = selectedRotationTagId,
+                                isAnimated = isAnimatedSelected
                             ).toJson()
+                            "Other" -> if (selectedDisplayType == "Goto Page Button") selectedTargetScreenId.toString() else ""
                             else -> ""
                         }
 
-                        onSave(
-                            dialogItem.copy(
-                                parentTagId = finalTagId,
-                                Type = if (selectedCategory == "Data") selectedItemType else 0,
-                                DisplayType = finalDisplayType,
-                                configStr = finalConfigStr,
-                                isShowTagName = if (selectedCategory == "Data") isShowTagName else false
-                            )
+                        val savedGroupBoxItem = dialogItem.copy(
+                            parentTagId = finalTagId,
+                            Type = if (selectedCategory == "Data") selectedItemType else 0,
+                            DisplayType = finalDisplayType,
+                            configStr = finalConfigStr,
+                            isShowTagName = if (selectedCategory == "Data" || selectedCategory == "Group Box") isShowTagName else false
                         )
+
+                        onSave(savedGroupBoxItem)
+
+                        if (selectedCategory == "Group Box" && selectedLibraryGroupId > 0L) {
+                            viewModel.copyLibraryGroupToScreen(
+                                libraryGroupScreenId = selectedLibraryGroupId,
+                                targetScreenId = currentScreenId,
+                                targetGroupBoxItem = savedGroupBoxItem
+                            )
+                        }
                     }
                 ) {
                     Text("Save")
@@ -2446,7 +3404,7 @@ fun GraphicsItemWidget(
     val context = LocalContext.current
     val imageFile = remember(imageConfig.fileName) {
         if (imageConfig.fileName.isNotBlank()) {
-            File(GraphicsImageManager.getGraphicsDirectory(context), imageConfig.fileName)
+            GraphicsImageManager.findGraphicsFile(context, imageConfig.fileName)
         } else null
     }
     val imageBitmap = remember(imageFile?.absolutePath, imageFile?.lastModified()) {
@@ -2460,29 +3418,167 @@ fun GraphicsItemWidget(
         } else null
     }
 
+    val imageLoader = remember(context) {
+        ImageLoader.Builder(context)
+            .components {
+                add(GifDecoder.Factory())
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                }
+            }
+            .build()
+    }
+
+    val isImageItem = displayType == "Image" || (imageFile != null && imageFile.exists())
+    val surfaceBgColor = if (displayType == "Group Box" || isImageItem) {
+        Color.Transparent
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+
+    val surfaceBorder = if (displayType == "Group Box" || isImageItem) {
+        null
+    } else {
+        BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+    }
+
     Surface(
-        shape = RoundedCornerShape(4.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
-        modifier = modifier
+        shape = RectangleShape,
+        color = surfaceBgColor,
+        border = surfaceBorder,
+        modifier = modifier.clipToBounds()
     ) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(2.dp)
+                .clipToBounds()
         ) {
-            if (imageBitmap != null) {
-                // Render fitted imported/exported image bitmap
+            val isAnimatedItemImage = imageConfig.isAnimated || (imageFile != null && isAnimatedFileName(imageFile.name))
+
+            if (isAnimatedItemImage && imageFile != null && imageFile.exists() && imageFile.isFile) {
+                // Render animated GIF / WebP graphic using Coil stretched strictly to item bounds
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(imageFile)
+                        .crossfade(false)
+                        .build(),
+                    imageLoader = imageLoader,
+                    contentDescription = item.configStr,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
+                )
+            } else if (imageBitmap != null) {
+                // Render fitted imported/exported static image bitmap
                 Image(
                     bitmap = imageBitmap,
                     contentDescription = item.configStr,
                     contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clipToBounds()
                 )
             } else {
                 when (displayType) {
-                    "Goto Page Button" -> {
+                    "Group Box" -> {
+                    val groupTitle = item.configStr.ifBlank { "Group Box" }
+                    val libGroupScreen = remember(allScreens, groupTitle, item.configStr) {
+                        val cleanStr = item.configStr.trim()
+                        allScreens.find { screen ->
+                            screen.Type == Screens.TYPE_GRAPHICS_GROUP &&
+                            (screen.Name.equals(cleanStr, ignoreCase = true) ||
+                             screen.id.toString() == cleanStr ||
+                             cleanStr.startsWith(screen.Name, ignoreCase = true))
+                        }
+                    }
+
+                    val bgType = libGroupScreen?.backgroundType?.trim()?.ifBlank { "Color" } ?: "Transparent"
+                    val isTransparentBg = libGroupScreen == null || bgType.equals("Transparent", ignoreCase = true)
+                    val isImageBg = !isTransparentBg && bgType.equals("Image", ignoreCase = true)
+                    val isColorBg = !isTransparentBg && !isImageBg
+
+                    val groupBgColor = remember(libGroupScreen?.backgroundColorHex, libGroupScreen?.backgroundType, isTransparentBg, isColorBg) {
+                        if (isColorBg && libGroupScreen != null) {
+                            val hex = libGroupScreen.backgroundColorHex.ifBlank { "#FAFAFA" }
+                            try {
+                                Color(android.graphics.Color.parseColor(hex))
+                            } catch (_: Exception) {
+                                Color.Transparent
+                            }
+                        } else {
+                            Color.Transparent
+                        }
+                    }
+
+                    val groupBgFile = remember(libGroupScreen?.backgroundImage) {
+                        if (isImageBg && libGroupScreen != null && libGroupScreen.backgroundImage.isNotBlank()) {
+                            GraphicsImageManager.findGraphicsFile(context, libGroupScreen.backgroundImage)
+                        } else null
+                    }
+                    val groupBgBitmap = remember(groupBgFile?.absolutePath, groupBgFile?.lastModified()) {
+                        if (groupBgFile != null && groupBgFile.exists() && groupBgFile.isFile) {
+                            try {
+                                BitmapFactory.decodeFile(groupBgFile.absolutePath)?.asImageBitmap()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                null
+                            }
+                        } else null
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(groupBgColor)
+                    ) {
+                        if (isImageBg && groupBgFile != null && groupBgFile.exists()) {
+                            if (isAnimatedFileName(groupBgFile.name)) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(context)
+                                        .data(groupBgFile)
+                                        .crossfade(true)
+                                        .build(),
+                                    imageLoader = imageLoader,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.FillBounds,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else if (groupBgBitmap != null) {
+                                Image(
+                                    bitmap = groupBgBitmap,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.FillBounds,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+
+                        if (item.isShowTagName && groupTitle.isNotBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(start = 3.dp, top = 2.dp)
+                            ) {
+                                Text(
+                                    text = groupTitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                "Goto Page Button" -> {
                         val targetScreenId = item.configStr.toLongOrNull() ?: 0L
                         val targetScreen = remember(allScreens, targetScreenId) {
                             allScreens.find { it.id == targetScreenId }
@@ -2639,8 +3735,15 @@ fun GraphicsItemWidget(
                         }
                     }
                     else -> {
-                        // Default Numeric or Tag Value — Show ONLY the value (not the tag name)
-                        val textToShow = if (tag != null) tag.storedValue.ifEmpty { "0" } else (if (storedVal.isNotEmpty() && storedVal != "0") storedVal else displayType)
+                        // Default Numeric or Tag Value — Show generic GUI value if tag is null or erased
+                        val textToShow = when {
+                            tag != null -> tag.storedValue.ifEmpty { "0" }
+                            storedVal.isNotEmpty() && storedVal != "0" -> storedVal
+                            displayType.contains("Float", ignoreCase = true) -> "0.00"
+                            displayType.contains("Hex", ignoreCase = true) -> "0x0000"
+                            else -> "0"
+                        }
+                        val hasTagName = !tagDisplayName.isNullOrEmpty()
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.primaryContainer,
@@ -2648,8 +3751,15 @@ fun GraphicsItemWidget(
                             modifier = Modifier.fillMaxSize()
                         ) {
                             Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.fillMaxSize().padding(4.dp)
+                                contentAlignment = if (hasTagName) Alignment.BottomCenter else Alignment.Center,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(
+                                        start = 2.dp,
+                                        end = 2.dp,
+                                        bottom = if (hasTagName) 3.dp else 2.dp,
+                                        top = if (hasTagName) 11.dp else 2.dp
+                                    )
                             ) {
                                 AutoResizedText(
                                     text = textToShow,
@@ -2662,23 +3772,20 @@ fun GraphicsItemWidget(
                 }
             }
 
-            // Upper Left Corner Tag Name Label (like an outlined text box with a label)
+            // Upper Left Corner Tag Name Label (transparent background in extreme top-left corner)
             if (!tagDisplayName.isNullOrEmpty()) {
-                Box(
+                Text(
+                    text = tagDisplayName,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(start = 3.dp, top = 1.dp)
-                ) {
-                    Text(
-                        text = tagDisplayName,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                        .padding(start = 2.dp, top = 1.dp)
+                )
             }
         }
     }
@@ -2715,6 +3822,7 @@ fun ScreenConfigDialog(
                 val importedName = GraphicsImageManager.importImageFromUri(context, uri)
                 if (!importedName.isNullOrEmpty()) {
                     bgImageName = importedName
+                    bgType = "Image"
                     Toast.makeText(context, "Imported background image '$importedName'", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(context, "Error importing background image: Could not copy file from system URI.", Toast.LENGTH_LONG).show()
@@ -2726,14 +3834,22 @@ fun ScreenConfigDialog(
         }
     }
 
+    val dialogScrollState = rememberScrollState()
+    val canScrollDialogDown by remember {
+        derivedStateOf { dialogScrollState.canScrollForward }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Configure Screen Background", fontWeight = FontWeight.Bold) },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(dialogScrollState)
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                 // Background Type Selector Card
                 OutlinedCard(
                     shape = RoundedCornerShape(8.dp),
@@ -2752,7 +3868,7 @@ fun ScreenConfigDialog(
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -2763,7 +3879,7 @@ fun ScreenConfigDialog(
                                     selected = bgType == "Color",
                                     onClick = { bgType = "Color" }
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
                                 Text("Color", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             }
 
@@ -2775,8 +3891,20 @@ fun ScreenConfigDialog(
                                     selected = bgType == "Image",
                                     onClick = { bgType = "Image" }
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
                                 Text("Image", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { bgType = "Transparent" }
+                            ) {
+                                RadioButton(
+                                    selected = bgType == "Transparent",
+                                    onClick = { bgType = "Transparent" }
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("Transparent", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -2821,7 +3949,9 @@ fun ScreenConfigDialog(
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showImagePicker = true }
                             ) {
                                 Column(modifier = Modifier.padding(10.dp)) {
                                     Text(
@@ -2880,6 +4010,14 @@ fun ScreenConfigDialog(
                     }
                 }
             }
+
+            ScrollMoreDownIndicator(
+                canScrollMore = canScrollDialogDown,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp)
+            )
+        }
         },
         confirmButton = {
             Button(
@@ -2909,6 +4047,7 @@ fun ScreenConfigDialog(
             initialColorHex = bgColorHex,
             onColorSelected = { newHex ->
                 bgColorHex = newHex
+                bgType = "Color"
                 showColorPicker = false
             },
             onDismiss = { showColorPicker = false }
@@ -2920,6 +4059,7 @@ fun ScreenConfigDialog(
             context = context,
             onImageSelected = { selectedFilename ->
                 bgImageName = selectedFilename
+                bgType = "Image"
                 showImagePicker = false
             },
             onDismiss = { showImagePicker = false }

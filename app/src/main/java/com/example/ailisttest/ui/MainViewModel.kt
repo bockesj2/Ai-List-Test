@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -410,6 +411,11 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val graphicsScreensWithItems: StateFlow<List<ScreenWithGraphicsItems>> = repository.getGraphicsScreensWithItems()
+        .map { screens -> screens.filter { it.screen.Type == Screens.TYPE_GRAPHICS } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val graphicsGroupsWithItems: StateFlow<List<ScreenWithGraphicsItems>> = repository.getGraphicsScreensWithItems()
+        .map { screens -> screens.filter { it.screen.Type == Screens.TYPE_GRAPHICS_GROUP } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allScreens: StateFlow<List<Screens>> = repository.getAllScreens()
@@ -443,6 +449,34 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
         return candidateName
     }
 
+    private fun generateUniqueGroupName(allScreens: List<Screens>): String {
+        val groupRegex = Regex("^Group(\\d+)$", RegexOption.IGNORE_CASE)
+        var maxNum = 0
+        var foundNumberedGroup = false
+
+        allScreens.forEach { screen ->
+            val match = groupRegex.find(screen.Name.trim())
+            if (match != null) {
+                val num = match.groupValues[1].toIntOrNull()
+                if (num != null) {
+                    foundNumberedGroup = true
+                    if (num > maxNum) {
+                        maxNum = num
+                    }
+                }
+            }
+        }
+
+        var nextNum = if (foundNumberedGroup) (maxNum + 1) else 1
+        var candidateName = "Group$nextNum"
+
+        while (allScreens.any { it.Name.trim().equals(candidateName, ignoreCase = true) }) {
+            nextNum++
+            candidateName = "Group$nextNum"
+        }
+        return candidateName
+    }
+
     private suspend fun reindexScreens() {
         val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
         allScreens.forEachIndexed { index, screen ->
@@ -471,6 +505,57 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
             val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS))
             _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
             onShowSnackbar("Created graphics screen '$candidateName'")
+        }
+    }
+
+    fun addGraphicsGroup(onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList()
+            val candidateName = generateUniqueGroupName(allScreens)
+
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS_GROUP))
+            _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+            onShowSnackbar("Created graphics group '$candidateName'")
+        }
+    }
+
+    fun copyLibraryGroupToScreen(
+        libraryGroupScreenId: Long,
+        targetScreenId: Long,
+        targetGroupBoxItem: GraphicsScreenItems
+    ) {
+        viewModelScope.launch {
+            val libGroupScreen = repository.getScreenById(libraryGroupScreenId)
+            val libGroupItems = repository.getGraphicsScreenItemsForScreenSync(libraryGroupScreenId)
+
+            val updatedGroupBox = if (libGroupScreen != null && libGroupScreen.canvasWidth > 0f && libGroupScreen.canvasHeight > 0f) {
+                targetGroupBoxItem.copy(
+                    Width = libGroupScreen.canvasWidth,
+                    Height = libGroupScreen.canvasHeight
+                )
+            } else targetGroupBoxItem
+
+            if (updatedGroupBox.Width != targetGroupBoxItem.Width || updatedGroupBox.Height != targetGroupBoxItem.Height) {
+                repository.updateGraphicsScreenItem(updatedGroupBox)
+            }
+
+            val existingTargetSubItems = repository.getGraphicsScreenItemsForScreenSync(targetScreenId)
+                .filter { it.parentCustomGroupId == targetGroupBoxItem.id }
+
+            if (existingTargetSubItems.isEmpty() && libGroupItems.isNotEmpty()) {
+                libGroupItems.forEach { libItem ->
+                    val copiedSubItem = libItem.copy(
+                        id = 0,
+                        parentScreenId = targetScreenId,
+                        parentCustomGroupId = targetGroupBoxItem.id,
+                        OffsetX = updatedGroupBox.OffsetX + libItem.OffsetX,
+                        OffsetY = updatedGroupBox.OffsetY + libItem.OffsetY,
+                        Width = libItem.Width,
+                        Height = libItem.Height
+                    )
+                    repository.insertGraphicsScreenItem(copiedSubItem)
+                }
+            }
         }
     }
 
@@ -515,6 +600,28 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
             val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS))
             _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
             onShowSnackbar("Created graphics screen '$candidateName' below '${targetScreen.Name}'")
+        }
+    }
+
+    fun addGraphicsGroupAbove(targetScreen: Screens, onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
+            val candidateName = generateUniqueGroupName(allScreens)
+
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS_GROUP))
+            _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+            onShowSnackbar("Created graphics group '$candidateName' above '${targetScreen.Name}'")
+        }
+    }
+
+    fun addGraphicsGroupBelow(targetScreen: Screens, onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList().sortedWith(compareBy({ it.Type }, { it.id }))
+            val candidateName = generateUniqueGroupName(allScreens)
+
+            val newId = repository.insertScreen(Screens(Name = candidateName, Type = Screens.TYPE_GRAPHICS_GROUP))
+            _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+            onShowSnackbar("Created graphics group '$candidateName' below '${targetScreen.Name}'")
         }
     }
 

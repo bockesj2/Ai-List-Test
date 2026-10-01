@@ -9,8 +9,10 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Palette
@@ -18,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.example.ailisttest.ui.components.ScrollMoreDownIndicator
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -72,6 +75,11 @@ fun GroupColorPickerDialog(
         Color.hsv(hue, saturation.coerceIn(0f, 1f), value.coerceIn(0f, 1f))
     }
 
+    val dialogScrollState = rememberScrollState()
+    val canScrollDialogDown by remember {
+        derivedStateOf { dialogScrollState.canScrollForward }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -86,215 +94,226 @@ fun GroupColorPickerDialog(
             }
         },
         text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Live Color Preview Card & Hex Display
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(currentColor)
-                            .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-                    )
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Selected Color",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = currentColor.toHex(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
-                // 2D Saturation / Value Gradient Canvas
-                Box(
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(160.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(dialogScrollState)
+                        .padding(bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val pureHueColor = remember(hue) { Color.hsv(hue, 1f, 1f) }
-
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(hue) {
-                                detectTapGestures { offset ->
-                                    saturation = (offset.x / size.width).coerceIn(0f, 1f)
-                                    value = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
-                                }
-                            }
-                            .pointerInput(hue) {
-                                detectDragGestures { change, _ ->
-                                    saturation = (change.position.x / size.width).coerceIn(0f, 1f)
-                                    value = (1f - (change.position.y / size.height)).coerceIn(0f, 1f)
-                                }
-                            }
+                    // Live Color Preview Card & Hex Display
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        val canvasWidth = size.width
-                        val canvasHeight = size.height
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(currentColor)
+                                .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        )
 
-                        // Horizontal white to pure hue
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(Color.White, pureHueColor)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Selected Color",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        )
-
-                        // Vertical transparent to black overlay
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black)
+                            Text(
+                                text = currentColor.toHex(),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
                             )
-                        )
-
-                        // Draw Selector Thumb Circle
-                        val thumbX = saturation * canvasWidth
-                        val thumbY = (1f - value) * canvasHeight
-
-                        drawCircle(
-                            color = Color.White,
-                            radius = 12f,
-                            center = Offset(thumbX, thumbY),
-                            style = Stroke(width = 4f)
-                        )
-                        drawCircle(
-                            color = Color.Black,
-                            radius = 14f,
-                            center = Offset(thumbX, thumbY),
-                            style = Stroke(width = 2f)
-                        )
+                        }
                     }
-                }
 
-                // Rainbow Hue Slider
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Hue Spectrum",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
+                    // 2D Saturation / Value Gradient Canvas
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
+                            .height(160.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
                     ) {
-                        val rainbowColors = remember {
-                            listOf(
-                                Color.Red,
-                                Color.Yellow,
-                                Color.Green,
-                                Color.Cyan,
-                                Color.Blue,
-                                Color.Magenta,
-                                Color.Red
-                            )
-                        }
+                        val pureHueColor = remember(hue) { Color.hsv(hue, 1f, 1f) }
 
                         Canvas(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .pointerInput(Unit) {
+                                .pointerInput(hue) {
                                     detectTapGestures { offset ->
-                                        hue = (offset.x / size.width * 360f).coerceIn(0f, 360f)
+                                        saturation = (offset.x / size.width).coerceIn(0f, 1f)
+                                        value = (1f - (offset.y / size.height)).coerceIn(0f, 1f)
                                     }
                                 }
-                                .pointerInput(Unit) {
+                                .pointerInput(hue) {
                                     detectDragGestures { change, _ ->
-                                        hue = (change.position.x / size.width * 360f).coerceIn(0f, 360f)
+                                        saturation = (change.position.x / size.width).coerceIn(0f, 1f)
+                                        value = (1f - (change.position.y / size.height)).coerceIn(0f, 1f)
                                     }
                                 }
                         ) {
+                            val canvasWidth = size.width
+                            val canvasHeight = size.height
+
+                            // Horizontal white to pure hue
                             drawRect(
-                                brush = Brush.horizontalGradient(colors = rainbowColors)
+                                brush = Brush.horizontalGradient(
+                                    colors = listOf(Color.White, pureHueColor)
+                                )
                             )
 
-                            val thumbX = (hue / 360f) * size.width
+                            // Vertical transparent to black overlay
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black)
+                                )
+                            )
+
+                            // Draw Selector Thumb Circle
+                            val thumbX = saturation * canvasWidth
+                            val thumbY = (1f - value) * canvasHeight
+
                             drawCircle(
                                 color = Color.White,
                                 radius = 12f,
-                                center = Offset(thumbX, size.height / 2f)
+                                center = Offset(thumbX, thumbY),
+                                style = Stroke(width = 4f)
                             )
                             drawCircle(
                                 color = Color.Black,
                                 radius = 14f,
-                                center = Offset(thumbX, size.height / 2f),
-                                style = Stroke(width = 2.5f)
+                                center = Offset(thumbX, thumbY),
+                                style = Stroke(width = 2f)
                             )
                         }
                     }
-                }
 
-                // Preset Palette Swatches
-                Text(
-                    text = "Preset Swatches",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
-                )
-
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(PRESET_SWATCHES) { swatchHex ->
-                        val swatchColor = parseHexColor(swatchHex)
-                        val isSelected = currentColor.toHex().equals(swatchHex, ignoreCase = true)
+                    // Rainbow Hue Slider
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Hue Spectrum",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
 
                         Box(
-                            contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .size(32.dp)
-                                .background(swatchColor, CircleShape)
-                                .border(
-                                    width = if (isSelected) 2.5.dp else 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray,
-                                    shape = CircleShape
-                                )
-                                .clickable {
-                                    val swatchHsv = FloatArray(3)
-                                    android.graphics.Color.colorToHSV(
-                                        android.graphics.Color.rgb(
-                                            (swatchColor.red * 255).toInt(),
-                                            (swatchColor.green * 255).toInt(),
-                                            (swatchColor.blue * 255).toInt()
-                                        ),
-                                        swatchHsv
-                                    )
-                                    hue = swatchHsv[0]
-                                    saturation = swatchHsv[1]
-                                    value = swatchHsv[2]
-                                }
+                                .fillMaxWidth()
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
                         ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Check,
-                                    contentDescription = "Selected",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(18.dp)
+                            val rainbowColors = remember {
+                                listOf(
+                                    Color.Red,
+                                    Color.Yellow,
+                                    Color.Green,
+                                    Color.Cyan,
+                                    Color.Blue,
+                                    Color.Magenta,
+                                    Color.Red
+                                )
+                            }
+
+                            Canvas(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(Unit) {
+                                        detectTapGestures { offset ->
+                                            hue = (offset.x / size.width * 360f).coerceIn(0f, 360f)
+                                        }
+                                    }
+                                    .pointerInput(Unit) {
+                                        detectDragGestures { change, _ ->
+                                            hue = (change.position.x / size.width * 360f).coerceIn(0f, 360f)
+                                        }
+                                    }
+                            ) {
+                                drawRect(
+                                    brush = Brush.horizontalGradient(colors = rainbowColors)
+                                )
+
+                                val thumbX = (hue / 360f) * size.width
+                                drawCircle(
+                                    color = Color.White,
+                                    radius = 12f,
+                                    center = Offset(thumbX, size.height / 2f)
+                                )
+                                drawCircle(
+                                    color = Color.Black,
+                                    radius = 14f,
+                                    center = Offset(thumbX, size.height / 2f),
+                                    style = Stroke(width = 2.5f)
                                 )
                             }
                         }
                     }
+
+                    // Preset Palette Swatches
+                    Text(
+                        text = "Preset Swatches",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(PRESET_SWATCHES) { swatchHex ->
+                            val swatchColor = parseHexColor(swatchHex)
+                            val isSelected = currentColor.toHex().equals(swatchHex, ignoreCase = true)
+
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .background(swatchColor, CircleShape)
+                                    .border(
+                                        width = if (isSelected) 2.5.dp else 1.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray,
+                                        shape = CircleShape
+                                    )
+                                    .clickable {
+                                        val swatchHsv = FloatArray(3)
+                                        android.graphics.Color.colorToHSV(
+                                            android.graphics.Color.rgb(
+                                                (swatchColor.red * 255).toInt(),
+                                                (swatchColor.green * 255).toInt(),
+                                                (swatchColor.blue * 255).toInt()
+                                            ),
+                                            swatchHsv
+                                        )
+                                        hue = swatchHsv[0]
+                                        saturation = swatchHsv[1]
+                                        value = swatchHsv[2]
+                                    }
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "Selected",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
+
+                ScrollMoreDownIndicator(
+                    canScrollMore = canScrollDialogDown,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 4.dp)
+                )
             }
         },
         confirmButton = {

@@ -20,6 +20,9 @@ sealed interface AppNavKey : NavKey {
     data object GraphicsScreens : AppNavKey
 
     @Serializable
+    data object GraphicsGroups : AppNavKey
+
+    @Serializable
     data object PollingStatus : AppNavKey
 
     @Serializable
@@ -27,6 +30,9 @@ sealed interface AppNavKey : NavKey {
 
     @Serializable
     data object ModbusByteOrderConfig : AppNavKey
+
+    @Serializable
+    data object Debugging : AppNavKey
 
     @Serializable
     data class DynamicListScreen(val screenId: Long) : AppNavKey

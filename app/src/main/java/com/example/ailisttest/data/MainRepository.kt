@@ -54,7 +54,12 @@ class MainRepository(
                 PlcDataTypes(id = 1, description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true),
                 PlcDataTypes(id = 2, description = "Data Register Double", shortName = "DD", dataType = "INT", bytes = 4, defaultModbusAddress = 416385L, isZeroBasedAddressing = false, hasBits = true),
                 PlcDataTypes(id = 3, description = "Data Register Hex", shortName = "DH", dataType = "UINT", bytes = 2, defaultModbusAddress = 424577L, isZeroBasedAddressing = false, hasBits = true),
-                PlcDataTypes(id = 4, description = "Data Register Float", shortName = "DF", dataType = "FLOAT", bytes = 4, defaultModbusAddress = 428673L, isZeroBasedAddressing = false, hasBits = false)
+                PlcDataTypes(id = 4, description = "Data Register Float", shortName = "DF", dataType = "FLOAT", bytes = 4, defaultModbusAddress = 428673L, isZeroBasedAddressing = false, hasBits = false),
+                PlcDataTypes(id = 5, description = "Inputs (Words)", shortName = "XD", dataType = "INT", bytes = 4, defaultModbusAddress = 357345L, isZeroBasedAddressing = false, hasBits = true),
+                PlcDataTypes(id = 6, description = "Outputs (Words)", shortName = "YD", dataType = "INT", bytes = 4, defaultModbusAddress = 457857L, isZeroBasedAddressing = false, hasBits = true),
+                PlcDataTypes(id = 7, description = "Timers", shortName = "TD", dataType = "INT", bytes = 2, defaultModbusAddress = 445057L, isZeroBasedAddressing = false, hasBits = true),
+                PlcDataTypes(id = 8, description = "Counters", shortName = "CTD", dataType = "INT", bytes = 4, defaultModbusAddress = 449153L, isZeroBasedAddressing = false, hasBits = true),
+                PlcDataTypes(id = 9, description = "SD (System Data)", shortName = "SD", dataType = "INT", bytes = 2, defaultModbusAddress = 361441L, isZeroBasedAddressing = false, hasBits = true)
             )
         )
         refreshHierarchy()
@@ -114,10 +119,32 @@ class MainRepository(
     suspend fun getGraphicsScreenItemsForScreenSync(screenId: Long): List<GraphicsScreenItems> = graphicsScreenItemsDao.getItemsForScreenSync(screenId)
     suspend fun insertGraphicsScreenItem(item: GraphicsScreenItems): Long = graphicsScreenItemsDao.insertItem(item)
     suspend fun updateGraphicsScreenItem(item: GraphicsScreenItems) = graphicsScreenItemsDao.updateItem(item)
-    suspend fun deleteGraphicsScreenItem(item: GraphicsScreenItems) = graphicsScreenItemsDao.deleteItem(item)
+    suspend fun deleteGraphicsScreenItem(item: GraphicsScreenItems) {
+        graphicsScreenItemsDao.deleteItem(item)
+        graphicsScreenItemsDao.deleteItemsByParentGroupId(item.id)
+        cleanupOrphanGraphicsScreenItems()
+    }
+
+    suspend fun cleanupOrphanGraphicsScreenItems() {
+        val allItems = graphicsScreenItemsDao.getAllItemsSync()
+        if (allItems.isEmpty()) return
+
+        val allItemIds = allItems.map { it.id }.toSet()
+        val orphanSubItems = allItems.filter {
+            it.parentCustomGroupId != null && !allItemIds.contains(it.parentCustomGroupId)
+        }
+
+        orphanSubItems.forEach { orphan ->
+            graphicsScreenItemsDao.deleteItem(orphan)
+        }
+    }
+
     suspend fun insertScreen(screen: Screens): Long = screensDao.insertScreen(screen)
     suspend fun updateScreen(screen: Screens) = screensDao.updateScreen(screen)
-    suspend fun deleteScreen(screen: Screens) = screensDao.deleteScreen(screen)
+    suspend fun deleteScreen(screen: Screens) {
+        screensDao.deleteScreen(screen)
+        cleanupOrphanGraphicsScreenItems()
+    }
 
     suspend fun findTagByName(tagName: String): TagEntity? {
         val cleanName = tagName.substringAfterLast("/").trim()
@@ -374,17 +401,29 @@ class MainRepository(
 
     suspend fun ensureDefaultDataTypes() {
         val existing = dataTypeDao.getAllDataTypesList()
+        val defaultList = listOf(
+            PlcDataTypes(description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "Data Register Double", shortName = "DD", dataType = "INT", bytes = 4, defaultModbusAddress = 416385L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "Data Register Hex", shortName = "DH", dataType = "UINT", bytes = 2, defaultModbusAddress = 424577L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "Data Register Float", shortName = "DF", dataType = "FLOAT", bytes = 4, defaultModbusAddress = 428673L, isZeroBasedAddressing = false, hasBits = false),
+            PlcDataTypes(description = "Inputs (Words)", shortName = "XD", dataType = "INT", bytes = 4, defaultModbusAddress = 357345L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "Outputs (Words)", shortName = "YD", dataType = "INT", bytes = 4, defaultModbusAddress = 457857L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "Timers", shortName = "TD", dataType = "INT", bytes = 2, defaultModbusAddress = 445057L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "Counters", shortName = "CTD", dataType = "INT", bytes = 4, defaultModbusAddress = 449153L, isZeroBasedAddressing = false, hasBits = true),
+            PlcDataTypes(description = "SD (System Data)", shortName = "SD", dataType = "INT", bytes = 2, defaultModbusAddress = 361441L, isZeroBasedAddressing = false, hasBits = true)
+        )
+
         if (existing.isEmpty()) {
-            dataTypeDao.insertAll(
-                listOf(
-                    PlcDataTypes(description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true),
-                    PlcDataTypes(description = "Data Register Double", shortName = "DD", dataType = "INT", bytes = 4, defaultModbusAddress = 416385L, isZeroBasedAddressing = false, hasBits = true),
-                    PlcDataTypes(description = "Data Register Hex", shortName = "DH", dataType = "UINT", bytes = 2, defaultModbusAddress = 424577L, isZeroBasedAddressing = false, hasBits = true),
-                    PlcDataTypes(description = "Data Register Float", shortName = "DF", dataType = "FLOAT", bytes = 4, defaultModbusAddress = 428673L, isZeroBasedAddressing = false, hasBits = false)
-                )
-            )
+            dataTypeDao.insertAll(defaultList)
         } else {
-            val duplicates = existing.groupBy { it.shortName.uppercase() }.filter { it.value.size > 1 }
+            val existingShortNames = existing.map { it.shortName.uppercase() }.toSet()
+            val missing = defaultList.filter { !existingShortNames.contains(it.shortName.uppercase()) }
+            if (missing.isNotEmpty()) {
+                dataTypeDao.insertAll(missing)
+            }
+
+            val updatedList = dataTypeDao.getAllDataTypesList()
+            val duplicates = updatedList.groupBy { it.shortName.uppercase() }.filter { it.value.size > 1 }
             for ((_, list) in duplicates) {
                 list.drop(1).forEach { dup ->
                     dataTypeDao.deleteById(dup.id)

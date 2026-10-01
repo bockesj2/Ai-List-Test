@@ -5,6 +5,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface GraphicsScreenItemsDao {
+    @Query("SELECT * FROM GraphicsScreenItems")
+    suspend fun getAllItemsSync(): List<GraphicsScreenItems>
+
     @Query("SELECT * FROM GraphicsScreenItems WHERE parentScreenId = :screenId")
     fun getItemsForScreen(screenId: Long): Flow<List<GraphicsScreenItems>>
 
@@ -23,6 +26,9 @@ interface GraphicsScreenItemsDao {
 
     @Delete
     suspend fun deleteItem(item: GraphicsScreenItems)
+
+    @Query("DELETE FROM GraphicsScreenItems WHERE parentCustomGroupId = :groupId")
+    suspend fun deleteItemsByParentGroupId(groupId: Long)
 
     @Query("DELETE FROM GraphicsScreenItems WHERE parentScreenId = :screenId")
     suspend fun deleteItemsForScreen(screenId: Long)

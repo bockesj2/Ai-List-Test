@@ -440,11 +440,15 @@ DF107,FLOAT,"Axis2DesPosPrevEng",0,Yes,""
     fun resolveDataTypeFromAddress(address: String, dataTypes: List<DataTypes>): DataTypes? {
         val cleanAddr = address.trim().uppercase()
         val targetShortName = when {
+            cleanAddr.startsWith("CTD") -> "CTD"
+            cleanAddr.startsWith("XD") -> "XD"
+            cleanAddr.startsWith("YD") -> "YD"
+            cleanAddr.startsWith("TD") -> "TD"
+            cleanAddr.startsWith("SD") -> "SD"
             cleanAddr.startsWith("DD") -> "DD"
             cleanAddr.startsWith("DF") -> "DF"
             cleanAddr.startsWith("DH") -> "DH"
             cleanAddr.startsWith("DS") || cleanAddr.startsWith("C") || cleanAddr.startsWith("X") || cleanAddr.startsWith("Y") -> "DS"
-            cleanAddr.startsWith("SD") || cleanAddr.startsWith("SC") || cleanAddr.startsWith("SB") || cleanAddr.startsWith("SW") -> null
             else -> {
                 val prefixLetters = cleanAddr.takeWhile { !it.isDigit() }
                 if (prefixLetters.isEmpty()) "DS" else null
@@ -455,6 +459,11 @@ DF107,FLOAT,"Axis2DesPosPrevEng",0,Yes,""
             dt.shortName.equals(targetShortName, ignoreCase = true)
         } ?: dataTypes.find { dt ->
             when (targetShortName) {
+                "CTD" -> dt.shortName.equals("CTD", ignoreCase = true) || dt.description.contains("Counter", ignoreCase = true)
+                "XD" -> dt.shortName.equals("XD", ignoreCase = true) || dt.description.contains("Input", ignoreCase = true)
+                "YD" -> dt.shortName.equals("YD", ignoreCase = true) || dt.description.contains("Output", ignoreCase = true)
+                "TD" -> dt.shortName.equals("TD", ignoreCase = true) || dt.description.contains("Timer", ignoreCase = true)
+                "SD" -> dt.shortName.equals("SD", ignoreCase = true) || dt.description.contains("System", ignoreCase = true)
                 "DD" -> dt.shortName.equals("DD", ignoreCase = true) || dt.description.contains("Double", ignoreCase = true)
                 "DF" -> dt.shortName.equals("DF", ignoreCase = true) || dt.description.contains("Float", ignoreCase = true)
                 "DH" -> dt.shortName.equals("DH", ignoreCase = true) || dt.description.contains("Hex", ignoreCase = true)

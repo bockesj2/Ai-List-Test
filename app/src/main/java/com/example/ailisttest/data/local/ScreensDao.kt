@@ -22,7 +22,7 @@ interface ScreensDao {
     fun getListScreensWithItems(): Flow<List<ScreenWithListItems>>
 
     @Transaction
-    @Query("SELECT * FROM Screens WHERE Type = 2 ORDER BY id ASC")
+    @Query("SELECT * FROM Screens WHERE Type = 2 OR Type = 3 ORDER BY id ASC")
     fun getGraphicsScreensWithItems(): Flow<List<ScreenWithGraphicsItems>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

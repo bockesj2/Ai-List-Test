@@ -45,9 +45,12 @@ import com.example.ailisttest.ui.MainViewModel
 import com.example.ailisttest.ui.TagNamePickerDialog
 import com.example.ailisttest.ui.navigation.AppNavKey
 import com.example.ailisttest.ui.screens.ConfigureScreen
+import com.example.ailisttest.ui.screens.DataTypesConfigScreen
+import com.example.ailisttest.ui.screens.DebugAnimationScreen
 import com.example.ailisttest.ui.screens.DisplayScreen
 import com.example.ailisttest.ui.screens.DynamicGraphicsScreen
 import com.example.ailisttest.ui.screens.DynamicListScreen
+import com.example.ailisttest.ui.screens.GraphicsGroupsConfigScreen
 import com.example.ailisttest.ui.screens.DataTypesConfigScreen
 import com.example.ailisttest.ui.screens.GraphicsScreensConfigScreen
 import com.example.ailisttest.ui.screens.ListScreensConfigScreen
@@ -229,7 +232,11 @@ class MainActivity : ComponentActivity() {
                                             exit = shrinkVertically()
                                         ) {
                                             Column {
-                                                if (allScreens.isEmpty()) {
+                                                val dashboardScreens = remember(allScreens) {
+                                                    allScreens.filter { it.Type == Screens.TYPE_LIST || it.Type == Screens.TYPE_GRAPHICS }
+                                                }
+
+                                                if (dashboardScreens.isEmpty()) {
                                                     DrawerTreeItemRow(
                                                         title = "(No Screens Configured)",
                                                         level = 2,
@@ -247,7 +254,7 @@ class MainActivity : ComponentActivity() {
                                                         icon = Icons.AutoMirrored.Rounded.ViewList
                                                     )
                                                 } else {
-                                                    allScreens.forEach { screen ->
+                                                    dashboardScreens.forEach { screen ->
                                                         val isGraphics = screen.Type == Screens.TYPE_GRAPHICS
                                                         val screenIcon = if (isGraphics) Icons.Rounded.Dashboard else Icons.AutoMirrored.Rounded.ViewList
                                                         val isScreenSelected = selectedTestItem == null && (
@@ -448,6 +455,24 @@ class MainActivity : ComponentActivity() {
                                                         },
                                                         icon = Icons.Rounded.Dashboard
                                                     )
+
+                                                    // Groups Library Sub-item
+                                                    DrawerTreeItemRow(
+                                                        title = "Groups Library",
+                                                        level = 2,
+                                                        isExpanded = false,
+                                                        isSelected = selectedTestItem == null && backStack.lastOrNull() is AppNavKey.GraphicsGroups,
+                                                        hasChildren = false,
+                                                        onToggleExpand = {},
+                                                        onClick = {
+                                                            selectedTestItem = null
+                                                            scope.launch { drawerState.close() }
+                                                            if (backStack.lastOrNull() !is AppNavKey.GraphicsGroups) {
+                                                                backStack.add(AppNavKey.GraphicsGroups)
+                                                            }
+                                                        },
+                                                        icon = Icons.Rounded.Folder
+                                                    )
                                                 }
                                             }
 
@@ -523,6 +548,24 @@ class MainActivity : ComponentActivity() {
                                                     )
                                                 }
                                             }
+
+                                            // Debugging Menu Item (Level 1)
+                                            DrawerTreeItemRow(
+                                                title = "Debugging",
+                                                level = 1,
+                                                isExpanded = false,
+                                                isSelected = selectedTestItem == null && backStack.lastOrNull() is AppNavKey.Debugging,
+                                                hasChildren = false,
+                                                onToggleExpand = {},
+                                                onClick = {
+                                                    selectedTestItem = null
+                                                    scope.launch { drawerState.close() }
+                                                    if (backStack.lastOrNull() !is AppNavKey.Debugging) {
+                                                        backStack.add(AppNavKey.Debugging)
+                                                    }
+                                                },
+                                                icon = Icons.Rounded.BugReport
+                                            )
                                         }
                                     }
                                 }
@@ -614,9 +657,20 @@ class MainActivity : ComponentActivity() {
                                     onOpenDrawer = { scope.launch { drawerState.open() } }
                                 )
                             }
+                            entry<AppNavKey.GraphicsGroups> {
+                                GraphicsGroupsConfigScreen(
+                                    viewModel = mainViewModel,
+                                    onOpenDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
                             entry<AppNavKey.PollingStatus> {
                                 PollingStatusScreen(
                                     viewModel = mainViewModel,
+                                    onOpenDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
+                            entry<AppNavKey.Debugging> {
+                                DebugAnimationScreen(
                                     onOpenDrawer = { scope.launch { drawerState.open() } }
                                 )
                             }
