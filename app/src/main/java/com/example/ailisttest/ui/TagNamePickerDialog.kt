@@ -38,6 +38,7 @@ fun TagNamePickerDialog(
     showNoneOption: Boolean = false,
     filterNodeId: Long? = null,
     allowedPlcPreset: String? = null,
+    allowedDataTypeCategory: String? = null, // "BINARY" or "INTEGER"
     onSelectNone: (() -> Unit)? = null,
     onTagsSelected: (selectedNames: List<String>, createNewGroup: Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -206,33 +207,46 @@ fun TagNamePickerDialog(
                                             val tagBadgeText = "$tagShortName${tag.offset}"
                                             val tagBadgeColor = getPickerDataTypeBadgeColor(tagDataType) ?: Color(0xFF81C784)
 
-                                            item(key = "picker_tag_${tag.id}") {
-                                                PickerTreeRow(
-                                                    text = tag.name,
-                                                    level = 2,
-                                                    isExpanded = expandedTags[tag.id] ?: false,
-                                                    isSelected = selectedTagPaths.contains(tag.name),
-                                                    hasChildren = hasBitTags,
-                                                    badgeText = tagBadgeText,
-                                                    badgeColor = tagBadgeColor,
-                                                    onToggleExpand = { expandedTags[tag.id] = !(expandedTags[tag.id] ?: false) },
-                                                    onSelect = { toggleSelection(tag.name) }
-                                                )
+                                            val isFloatType = tagDataType.shortName.equals("DF", ignoreCase = true) ||
+                                                    tagDataType.dataType.contains("FLOAT", ignoreCase = true) ||
+                                                    tagDataType.dataType.contains("DOUBLE", ignoreCase = true) ||
+                                                    tagDataType.dataType.contains("REAL", ignoreCase = true)
+
+                                            val isTagAllowed = when (allowedDataTypeCategory) {
+                                                "BINARY" -> typeHasBits || tagDataType.dataType.contains("BIT", ignoreCase = true) || tagDataType.dataType.contains("BOOL", ignoreCase = true)
+                                                "INTEGER" -> !isFloatType
+                                                else -> true
                                             }
 
-                                            if (allowBitSelection && expandedTags[tag.id] == true && hasBitTags) {
-                                                items(bitTagsList, key = { "picker_bitTag_${it.parentTagId}_${it.bitIndex}" }) { bitTag ->
+                                            if (isTagAllowed) {
+                                                item(key = "picker_tag_${tag.id}") {
                                                     PickerTreeRow(
-                                                        text = bitTag.name,
-                                                        level = 3,
-                                                        isExpanded = false,
-                                                        isSelected = selectedTagPaths.contains(bitTag.name),
-                                                        hasChildren = false,
-                                                        badgeText = "${tagShortName}${tag.offset}:${bitTag.bitIndex}",
-                                                        badgeColor = Color(0xFF00BCD4),
-                                                        onToggleExpand = {},
-                                                        onSelect = { toggleSelection(bitTag.name) }
+                                                        text = tag.name,
+                                                        level = 2,
+                                                        isExpanded = expandedTags[tag.id] ?: false,
+                                                        isSelected = selectedTagPaths.contains(tag.name),
+                                                        hasChildren = hasBitTags,
+                                                        badgeText = tagBadgeText,
+                                                        badgeColor = tagBadgeColor,
+                                                        onToggleExpand = { expandedTags[tag.id] = !(expandedTags[tag.id] ?: false) },
+                                                        onSelect = { toggleSelection(tag.name) }
                                                     )
+                                                }
+
+                                                if (allowBitSelection && expandedTags[tag.id] == true && hasBitTags) {
+                                                    items(bitTagsList, key = { "picker_bitTag_${it.parentTagId}_${it.bitIndex}" }) { bitTag ->
+                                                        PickerTreeRow(
+                                                            text = bitTag.name,
+                                                            level = 3,
+                                                            isExpanded = false,
+                                                            isSelected = selectedTagPaths.contains(bitTag.name),
+                                                            hasChildren = false,
+                                                            badgeText = "${tagShortName}${tag.offset}:${bitTag.bitIndex}",
+                                                            badgeColor = Color(0xFF00BCD4),
+                                                            onToggleExpand = {},
+                                                            onSelect = { toggleSelection(bitTag.name) }
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }

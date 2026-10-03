@@ -519,6 +519,24 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
         }
     }
 
+    fun addGraphicsGroupWithName(groupName: String, onCreated: (Screens) -> Unit = {}) {
+        viewModelScope.launch {
+            val allScreens = repository.getAllScreensList()
+            val cleanName = groupName.ifBlank { generateUniqueGroupName(allScreens) }
+            val existing = allScreens.find { it.Type == Screens.TYPE_GRAPHICS_GROUP && it.Name.equals(cleanName, ignoreCase = true) }
+
+            if (existing != null) {
+                onCreated(existing)
+            } else {
+                val newScreen = Screens(Name = cleanName, Type = Screens.TYPE_GRAPHICS_GROUP)
+                val newId = repository.insertScreen(newScreen)
+                val createdScreen = newScreen.copy(id = newId)
+                _expandedScreensMap.value = _expandedScreensMap.value + (newId to true)
+                onCreated(createdScreen)
+            }
+        }
+    }
+
     fun copyLibraryGroupToScreen(
         libraryGroupScreenId: Long,
         targetScreenId: Long,

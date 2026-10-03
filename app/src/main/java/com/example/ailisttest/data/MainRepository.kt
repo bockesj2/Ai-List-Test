@@ -117,12 +117,22 @@ class MainRepository(
     }
 
     suspend fun getGraphicsScreenItemsForScreenSync(screenId: Long): List<GraphicsScreenItems> = graphicsScreenItemsDao.getItemsForScreenSync(screenId)
-    suspend fun insertGraphicsScreenItem(item: GraphicsScreenItems): Long = graphicsScreenItemsDao.insertItem(item)
-    suspend fun updateGraphicsScreenItem(item: GraphicsScreenItems) = graphicsScreenItemsDao.updateItem(item)
+    suspend fun insertGraphicsScreenItem(item: GraphicsScreenItems): Long {
+        val id = graphicsScreenItemsDao.insertItem(item)
+        refreshHierarchy()
+        return id
+    }
+
+    suspend fun updateGraphicsScreenItem(item: GraphicsScreenItems) {
+        graphicsScreenItemsDao.updateItem(item)
+        refreshHierarchy()
+    }
+
     suspend fun deleteGraphicsScreenItem(item: GraphicsScreenItems) {
         graphicsScreenItemsDao.deleteItem(item)
         graphicsScreenItemsDao.deleteItemsByParentGroupId(item.id)
         cleanupOrphanGraphicsScreenItems()
+        refreshHierarchy()
     }
 
     suspend fun cleanupOrphanGraphicsScreenItems() {

@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        GraphicsImageManager.ensureGraphicsDirectoryExists(applicationContext)
         setContent {
             AiListTestTheme {
                 val backStack = rememberNavBackStack(AppNavKey.GraphicsScreens)
@@ -685,7 +686,12 @@ class MainActivity : ComponentActivity() {
                                 DynamicGraphicsScreen(
                                     screenId = key.screenId,
                                     viewModel = mainViewModel,
-                                    onOpenDrawer = { scope.launch { drawerState.open() } }
+                                    onOpenDrawer = { scope.launch { drawerState.open() } },
+                                    onNavigateToScreen = { targetScreen ->
+                                        if ((backStack.lastOrNull() as? AppNavKey.DynamicGraphicsScreen)?.screenId != targetScreen.id) {
+                                            backStack.add(AppNavKey.DynamicGraphicsScreen(targetScreen.id))
+                                        }
+                                    }
                                 )
                             }
                         }

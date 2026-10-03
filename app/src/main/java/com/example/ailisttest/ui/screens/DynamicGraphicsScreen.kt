@@ -1,6 +1,7 @@
 package com.example.ailisttest.ui.screens
 
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -27,6 +28,7 @@ import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.request.ImageRequest
 import com.example.ailisttest.data.GraphicsImageManager
+import com.example.ailisttest.data.local.Screens
 import com.example.ailisttest.ui.MainViewModel
 import java.io.File
 
@@ -35,7 +37,8 @@ import java.io.File
 fun DynamicGraphicsScreen(
     screenId: Long,
     viewModel: MainViewModel,
-    onOpenDrawer: () -> Unit
+    onOpenDrawer: () -> Unit,
+    onNavigateToScreen: (Screens) -> Unit = {}
 ) {
     val graphicsScreensWithItems by viewModel.graphicsScreensWithItems.collectAsStateWithLifecycle()
     val graphicsGroupsWithItems by viewModel.graphicsGroupsWithItems.collectAsStateWithLifecycle()
@@ -67,15 +70,8 @@ fun DynamicGraphicsScreen(
             GraphicsImageManager.findGraphicsFile(context, currentScreen.backgroundImage)
         } else null
     }
-    val screenBgBitmap = remember(screenBgFile?.absolutePath, screenBgFile?.lastModified()) {
-        if (screenBgFile != null && screenBgFile.exists() && screenBgFile.isFile) {
-            try {
-                BitmapFactory.decodeFile(screenBgFile.absolutePath)?.asImageBitmap()
-            } catch (e: Exception) {
-                e.printStackTrace()
-                null
-            }
-        } else null
+    val screenBgUri = remember(screenBgFile?.absolutePath) {
+        if (screenBgFile != null && screenBgFile.exists()) Uri.fromFile(screenBgFile) else null
     }
 
     val parsedScreenBgColor = remember(currentScreen?.backgroundColorHex, currentScreen?.backgroundType) {
@@ -110,25 +106,14 @@ fun DynamicGraphicsScreen(
         ) {
             // Render Stretched Screen Background Image if configured
             if (currentScreen?.backgroundType == "Image" && screenBgFile != null && screenBgFile.exists()) {
-                if (isAnimatedFileName(screenBgFile.name)) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(screenBgFile)
-                            .crossfade(true)
-                            .build(),
-                        imageLoader = imageLoader,
-                        contentDescription = null,
-                        contentScale = ContentScale.FillBounds,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else if (screenBgBitmap != null) {
-                    Image(
-                        bitmap = screenBgBitmap,
-                        contentDescription = null,
-                        contentScale = ContentScale.FillBounds,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                val screenCoilModel = GraphicsImageManager.getCoilModel(context, screenBgFile)
+                AsyncImage(
+                    model = screenCoilModel ?: screenBgUri,
+                    imageLoader = imageLoader,
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
 
             if (itemsList.isEmpty()) {
@@ -177,6 +162,8 @@ fun DynamicGraphicsScreen(
                             tag = tag,
                             allScreens = allScreens,
                             hierarchy = hierarchy,
+                            enabled = false,
+                            onNavigateToScreen = onNavigateToScreen,
                             onBitAction = { bitVal, isToggle ->
                                 if (tag != null) {
                                     if (item.Type in 1..1000) {
