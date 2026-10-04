@@ -2,6 +2,7 @@ package com.example.ailisttest.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
@@ -19,6 +20,8 @@ class UserPreferences(private val context: Context) {
         private val BYTE_ORDER_KEY = stringPreferencesKey("app_byte_order")
         private val DATA_TYPE_PLC_PRESET_KEY = stringPreferencesKey("data_type_plc_preset")
         private val TAG_FILE_FORMAT_KEY = stringPreferencesKey("tag_file_format")
+        private val INTERNAL_FORMULA_ENABLED_KEY = booleanPreferencesKey("internal_formula_enabled")
+        private val INTERNAL_FORMULA_PERIOD_KEY = longPreferencesKey("internal_formula_period_ms")
     }
 
     val isDebugMode: Flow<Boolean> = context.dataStore.data.map { preferences ->
@@ -88,6 +91,27 @@ class UserPreferences(private val context: Context) {
     suspend fun setTagFileFormat(format: String) {
         context.dataStore.edit { preferences ->
             preferences[TAG_FILE_FORMAT_KEY] = format
+        }
+    }
+
+    val isInternalFormulaEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[INTERNAL_FORMULA_ENABLED_KEY] ?: true
+    }
+
+    suspend fun setInternalFormulaEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[INTERNAL_FORMULA_ENABLED_KEY] = enabled
+        }
+    }
+
+    val internalFormulaPeriodMs: Flow<Long> = context.dataStore.data.map { preferences ->
+        preferences[INTERNAL_FORMULA_PERIOD_KEY] ?: 500L
+    }
+
+    suspend fun setInternalFormulaPeriodMs(periodMs: Long) {
+        val validMs = periodMs.coerceIn(100L, 5000L)
+        context.dataStore.edit { preferences ->
+            preferences[INTERNAL_FORMULA_PERIOD_KEY] = validMs
         }
     }
 }

@@ -12,7 +12,7 @@ data class NodeEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val name: String,
-    val ipAddress: String,
+    val ipAddress: String = "192.168.0.10",
     val byteOrder: String = "CDAB (3412) — Word-Swap",
     val plcPreset: String = "Click Plus PLC"
 )

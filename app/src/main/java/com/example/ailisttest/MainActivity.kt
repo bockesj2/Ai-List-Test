@@ -53,6 +53,7 @@ import com.example.ailisttest.ui.screens.DynamicListScreen
 import com.example.ailisttest.ui.screens.GraphicsGroupsConfigScreen
 import com.example.ailisttest.ui.screens.DataTypesConfigScreen
 import com.example.ailisttest.ui.screens.GraphicsScreensConfigScreen
+import com.example.ailisttest.ui.screens.InternalTagsConfigScreen
 import com.example.ailisttest.ui.screens.ListScreensConfigScreen
 import com.example.ailisttest.ui.screens.MainScreen
 import com.example.ailisttest.ui.screens.ModbusByteOrderConfigScreen
@@ -70,7 +71,7 @@ class MainActivity : ComponentActivity() {
         GraphicsImageManager.ensureGraphicsDirectoryExists(applicationContext)
         setContent {
             AiListTestTheme {
-                val backStack = rememberNavBackStack(AppNavKey.GraphicsScreens)
+                val backStack = rememberNavBackStack(AppNavKey.TagsInternal)
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
                 val scope = rememberCoroutineScope()
                 val context = LocalContext.current
@@ -80,6 +81,7 @@ class MainActivity : ComponentActivity() {
                 val expandedDrawerItems = remember {
                     mutableStateMapOf(
                         "Configure" to true,
+                        "ConfigureTags" to true,
                         "Screens" to true
                     )
                 }
@@ -344,23 +346,66 @@ class MainActivity : ComponentActivity() {
                                         exit = shrinkVertically()
                                     ) {
                                         Column {
-                                            // Tags Sub-item
+                                            // Tags Sub-menu (Level 1)
+                                            val configureTagsExpanded = expandedDrawerItems["ConfigureTags"] ?: true
                                             DrawerTreeItemRow(
                                                 title = "Tags",
                                                 level = 1,
-                                                isExpanded = false,
-                                                isSelected = selectedTestItem == null && backStack.lastOrNull() is AppNavKey.Configure,
-                                                hasChildren = false,
-                                                onToggleExpand = {},
+                                                isExpanded = configureTagsExpanded,
+                                                isSelected = false,
+                                                hasChildren = true,
+                                                onToggleExpand = {
+                                                    expandedDrawerItems["ConfigureTags"] = !(expandedDrawerItems["ConfigureTags"] ?: true)
+                                                },
                                                 onClick = {
-                                                    selectedTestItem = null
-                                                    scope.launch { drawerState.close() }
-                                                    if (backStack.lastOrNull() !is AppNavKey.Configure) {
-                                                        backStack.add(AppNavKey.Configure)
-                                                    }
+                                                    expandedDrawerItems["ConfigureTags"] = !(expandedDrawerItems["ConfigureTags"] ?: true)
                                                 },
                                                 icon = Icons.Rounded.Sell
                                             )
+
+                                            AnimatedVisibility(
+                                                visible = configureTagsExpanded,
+                                                enter = expandVertically(),
+                                                exit = shrinkVertically()
+                                            ) {
+                                                Column {
+                                                    // Configure / Tags / PLC
+                                                    DrawerTreeItemRow(
+                                                        title = "PLC",
+                                                        level = 2,
+                                                        isExpanded = false,
+                                                        isSelected = selectedTestItem == null && (backStack.lastOrNull() is AppNavKey.Configure || backStack.lastOrNull() is AppNavKey.TagsPlc),
+                                                        hasChildren = false,
+                                                        onToggleExpand = {},
+                                                        onClick = {
+                                                            selectedTestItem = null
+                                                            scope.launch { drawerState.close() }
+                                                            if (backStack.lastOrNull() !is AppNavKey.Configure) {
+                                                                backStack.add(AppNavKey.Configure)
+                                                            }
+                                                        },
+                                                        icon = Icons.Rounded.Dns
+                                                    )
+
+                                                    // Configure / Tags / Internal
+                                                    DrawerTreeItemRow(
+                                                        title = "Internal",
+                                                        level = 2,
+                                                        isExpanded = false,
+                                                        isSelected = selectedTestItem == null && backStack.lastOrNull() is AppNavKey.TagsInternal,
+                                                        hasChildren = false,
+                                                        onToggleExpand = {},
+                                                        onClick = {
+                                                            selectedTestItem = null
+                                                            scope.launch { drawerState.close() }
+                                                            if (backStack.lastOrNull() !is AppNavKey.TagsInternal) {
+                                                                backStack.add(AppNavKey.TagsInternal)
+                                                            }
+                                                        },
+                                                        icon = Icons.Rounded.Storage
+                                                    )
+                                                }
+                                            }
 
                                             // Modbus Byte Order Sub-item
                                             DrawerTreeItemRow(
@@ -640,6 +685,18 @@ class MainActivity : ComponentActivity() {
                                     onOpenDrawer = { scope.launch { drawerState.open() } }
                                 )
                             }
+                            entry<AppNavKey.TagsPlc> {
+                                ConfigureScreen(
+                                    viewModel = mainViewModel,
+                                    onOpenDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
+                            entry<AppNavKey.TagsInternal> {
+                                InternalTagsConfigScreen(
+                                    viewModel = mainViewModel,
+                                    onOpenDrawer = { scope.launch { drawerState.open() } }
+                                )
+                            }
                             entry<AppNavKey.Display> {
                                 DisplayScreen(
                                     viewModel = mainViewModel,
@@ -699,9 +756,11 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (showTagPickerDialog) {
+                    val internalTags by mainViewModel.internalTags.collectAsStateWithLifecycle()
                     TagNamePickerDialog(
                         hierarchy = hierarchy,
                         dataTypes = dataTypes,
+                        internalTags = internalTags,
                         onTagsSelected = { selectedNames, createNewGroup ->
                             Toast.makeText(context, "Selected ${selectedNames.size} item(s) (New Group: $createNewGroup)", Toast.LENGTH_SHORT).show()
                         },

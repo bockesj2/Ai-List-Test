@@ -21,6 +21,8 @@ class AiListApplication : Application() {
             database.customGroupDao(),
             database.headerItemDao(),
             database.tagListItemDao(),
+            database.internalTagDao(),
+            database.internalTagGroupDao(),
             userPreferences
         ) 
     }

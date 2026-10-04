@@ -25,6 +25,8 @@ class MainRepository(
     private val customGroupDao: CustomGroupDao,
     private val headerItemDao: HeaderItemDao,
     private val tagListItemDao: TagListItemDao,
+    private val internalTagDao: InternalTagDao,
+    private val internalTagGroupDao: InternalTagGroupDao,
     private val userPreferences: UserPreferences
 ) {
     val isDebugMode: Flow<Boolean> = userPreferences.isDebugMode
@@ -43,6 +45,10 @@ class MainRepository(
     suspend fun setDataTypePlcPreset(preset: String) = userPreferences.setDataTypePlcPreset(preset)
     val tagFileFormat: Flow<String> = userPreferences.tagFileFormat
     suspend fun setTagFileFormat(format: String) = userPreferences.setTagFileFormat(format)
+    val isInternalFormulaEnabled: Flow<Boolean> = userPreferences.isInternalFormulaEnabled
+    suspend fun setInternalFormulaEnabled(enabled: Boolean) = userPreferences.setInternalFormulaEnabled(enabled)
+    val internalFormulaPeriodMs: Flow<Long> = userPreferences.internalFormulaPeriodMs
+    suspend fun setInternalFormulaPeriodMs(periodMs: Long) = userPreferences.setInternalFormulaPeriodMs(periodMs)
     suspend fun updateDataType(dataType: DataTypes) {
         dataTypeDao.updateDataType(dataType)
         refreshHierarchy()
@@ -156,6 +162,27 @@ class MainRepository(
         cleanupOrphanGraphicsScreenItems()
     }
 
+    // Internal Tags
+    fun getAllInternalTags(): Flow<List<InternalTagEntity>> = internalTagDao.getAllInternalTags()
+    suspend fun getAllInternalTagsList(): List<InternalTagEntity> = internalTagDao.getAllInternalTagsList()
+    suspend fun getInternalTagById(id: Long): InternalTagEntity? = internalTagDao.getInternalTagById(id)
+    suspend fun insertInternalTag(tag: InternalTagEntity): Long = internalTagDao.insertInternalTag(tag)
+    suspend fun updateInternalTag(tag: InternalTagEntity) = internalTagDao.updateInternalTag(tag)
+    suspend fun deleteInternalTag(tag: InternalTagEntity) = internalTagDao.deleteInternalTag(tag)
+    suspend fun getAllTagsSync(): List<TagEntity> = tagDao.getAllTagsSync()
+
+    // Internal Tag Groups
+    fun getAllInternalTagGroups(): Flow<List<InternalTagGroupEntity>> = internalTagGroupDao.getAllGroups()
+    suspend fun getAllInternalTagGroupsList(): List<InternalTagGroupEntity> = internalTagGroupDao.getAllGroupsList()
+    suspend fun getInternalTagGroupById(id: Long): InternalTagGroupEntity? = internalTagGroupDao.getGroupById(id)
+    suspend fun insertInternalTagGroup(group: InternalTagGroupEntity): Long = internalTagGroupDao.insertGroup(group)
+    suspend fun updateInternalTagGroup(group: InternalTagGroupEntity) = internalTagGroupDao.updateGroup(group)
+    suspend fun deleteInternalTagGroup(group: InternalTagGroupEntity) {
+        val tagsInGroup = internalTagDao.getAllInternalTagsList().filter { it.groupId == group.id }
+        tagsInGroup.forEach { internalTagDao.updateInternalTag(it.copy(groupId = null)) }
+        internalTagGroupDao.deleteGroup(group)
+    }
+
     suspend fun findTagByName(tagName: String): TagEntity? {
         val cleanName = tagName.substringAfterLast("/").trim()
         return tagDao.getTagByNameSync(cleanName) ?: tagDao.getAllTagsSync().find { it.name == cleanName || it.name == tagName }
@@ -202,6 +229,20 @@ class MainRepository(
                     return ResolvedTarget.TagTarget(tag = parentTag, bitIndex = possibleBitIndex)
                 }
             }
+        }
+
+        // Check Internal Tags
+        val internalTag = internalTagDao.getAllInternalTagsList().find { it.name == cleanName || it.name == selectedPath }
+        if (internalTag != null) {
+            val syntheticTag = TagEntity(
+                id = -internalTag.id,
+                name = internalTag.name,
+                description = internalTag.description,
+                dataTypeId = 0L,
+                storedValue = internalTag.storedValue,
+                offset = 0
+            )
+            return ResolvedTarget.TagTarget(tag = syntheticTag, bitIndex = null)
         }
 
         return null

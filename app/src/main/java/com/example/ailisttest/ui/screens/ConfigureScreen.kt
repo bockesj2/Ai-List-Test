@@ -2227,7 +2227,7 @@ fun NodeForm(
     onFocusField: (label: String, value: String, clearAction: () -> Unit) -> Unit = { _, _, _ -> }
 ) {
     var name by remember(node.id) { mutableStateOf(node.name) }
-    var ipAddress by remember(node.id) { mutableStateOf(node.ipAddress) }
+    var ipAddress by remember(node.id) { mutableStateOf(node.ipAddress.ifBlank { "192.168.0.10" }) }
     var plcPreset by remember(node.id) { mutableStateOf(node.plcPreset.ifBlank { "Click Plus PLC" }) }
     var isEdited by remember(node.id) { mutableStateOf(false) }
 

@@ -472,6 +472,7 @@ fun ListScreensConfigScreen(
     val screensWithItems by viewModel.listScreensWithItems.collectAsStateWithLifecycle()
     val hierarchy by viewModel.hierarchy.collectAsStateWithLifecycle()
     val dataTypes by viewModel.dataTypes.collectAsStateWithLifecycle()
+    val internalTags by viewModel.internalTags.collectAsStateWithLifecycle()
     var selectedItem by remember { mutableStateOf<SelectedListItem?>(null) }
 
     val navigator = rememberListDetailPaneScaffoldNavigator<Nothing>()
@@ -620,6 +621,7 @@ fun ListScreensConfigScreen(
         TagNamePickerDialog(
             hierarchy = hierarchy,
             dataTypes = dataTypes,
+            internalTags = internalTags,
             onTagsSelected = { selectedNames, createNewGroup ->
                 val screenId = pickerTargetScreenId ?: return@TagNamePickerDialog
                 if (createNewGroup) {

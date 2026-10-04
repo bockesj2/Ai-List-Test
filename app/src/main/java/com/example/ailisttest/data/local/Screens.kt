@@ -74,12 +74,6 @@ data class HeaderItem(
             parentColumns = ["id"],
             childColumns = ["parentScreenId"],
             onDelete = ForeignKey.CASCADE
-        ),
-        ForeignKey(
-            entity = TagEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["parentTagId"],
-            onDelete = ForeignKey.SET_NULL
         )
     ]
 )
@@ -124,12 +118,6 @@ data class ScreenWithListItems(
             parentColumns = ["id"],
             childColumns = ["parentScreenId"],
             onDelete = ForeignKey.CASCADE
-        ),
-        ForeignKey(
-            entity = TagEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["parentTagId"],
-            onDelete = ForeignKey.SET_NULL
         )
     ]
 )

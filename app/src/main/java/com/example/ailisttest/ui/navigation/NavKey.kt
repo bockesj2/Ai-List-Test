@@ -11,6 +11,12 @@ sealed interface AppNavKey : NavKey {
     data object Configure : AppNavKey
 
     @Serializable
+    data object TagsPlc : AppNavKey
+
+    @Serializable
+    data object TagsInternal : AppNavKey
+
+    @Serializable
     data object Display : AppNavKey
 
     @Serializable

@@ -14,20 +14,29 @@ import com.example.ailisttest.data.modbus.ModbusByteOrderTransformer
 import com.example.ailisttest.data.modbus.ModbusTcpClient
 import com.example.ailisttest.data.modbus.PacketPollingStats
 import com.example.ailisttest.data.modbus.toHexString
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class NodeConnectionState {
     NOT_CONNECTED,      // Gray (#757575)
@@ -104,6 +113,8 @@ class MainViewModel(private val repository: MainRepository) : ViewModel() {
                 }
             }
         }
+
+        startInternalFormulaPolling()
     }
 
     val isPollingEnabled: StateFlow<Boolean> = repository.isPollingEnabled
@@ -1795,7 +1806,7 @@ data class ListScreenItemSpec(
                 candidateName = "Node$nextNum"
             }
 
-            val defaultIp = "127.0.0.1"
+            val defaultIp = "192.168.0.10"
             val newId = repository.insertNode(NodeEntity(name = candidateName, ipAddress = defaultIp))
             _newlyCreatedNodeIds.value = _newlyCreatedNodeIds.value + newId
             val newNode = NodeEntity(id = newId, name = candidateName, ipAddress = defaultIp)
@@ -2280,6 +2291,398 @@ data class ListScreenItemSpec(
     fun deleteTagListItem(item: TagListItems) {
         viewModelScope.launch {
             repository.deleteTagListItem(item)
+        }
+    }
+
+    // Internal Tags Operations
+    val internalTags: StateFlow<List<InternalTagEntity>> = repository.getAllInternalTags()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addInternalTag(
+        name: String,
+        description: String = "",
+        dataType: String = "INT",
+        initialVal: String = "0",
+        isFormulaEnabled: Boolean = false,
+        humanFormula: String = "",
+        internalFormula: String = "",
+        groupId: Long? = null,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            val existingList = repository.getAllInternalTagsList()
+            val trimmedName = name.trim()
+            if (trimmedName.isEmpty()) {
+                onResult(false, "Internal tag name cannot be empty")
+                return@launch
+            }
+            if (existingList.any { it.name.equals(trimmedName, ignoreCase = true) }) {
+                onResult(false, "Internal tag '$trimmedName' already exists")
+                return@launch
+            }
+
+            val newTag = InternalTagEntity(
+                name = trimmedName,
+                description = description.trim(),
+                dataType = dataType.ifBlank { "INT" },
+                initialValue = initialVal.ifBlank { "0" },
+                storedValue = initialVal.ifBlank { "0" },
+                isFormulaEnabled = isFormulaEnabled,
+                humanFormula = humanFormula.trim(),
+                internalFormula = internalFormula.trim(),
+                groupId = groupId
+            )
+            repository.insertInternalTag(newTag)
+            onResult(true, "Added internal tag '$trimmedName'")
+        }
+    }
+
+    fun updateInternalTag(tag: InternalTagEntity, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val existingList = repository.getAllInternalTagsList()
+            val trimmedName = tag.name.trim()
+            if (trimmedName.isEmpty()) {
+                onResult(false, "Internal tag name cannot be empty")
+                return@launch
+            }
+            if (existingList.any { it.id != tag.id && it.name.equals(trimmedName, ignoreCase = true) }) {
+                onResult(false, "Internal tag '$trimmedName' already exists")
+                return@launch
+            }
+
+            repository.updateInternalTag(
+                tag.copy(
+                    name = trimmedName,
+                    description = tag.description.trim(),
+                    humanFormula = tag.humanFormula.trim(),
+                    internalFormula = tag.internalFormula.trim()
+                )
+            )
+            onResult(true, "Updated internal tag '$trimmedName'")
+        }
+    }
+
+    fun deleteInternalTag(tag: InternalTagEntity, onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteInternalTag(tag)
+            onShowSnackbar("Deleted internal tag '${tag.name}'")
+        }
+    }
+
+    // Internal Tag Groups Operations
+    val internalTagGroups: StateFlow<List<InternalTagGroupEntity>> = repository.getAllInternalTagGroups()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addInternalTagGroup(name: String, description: String = "", onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val existingList = repository.getAllInternalTagGroupsList()
+            val trimmedName = name.trim()
+            if (trimmedName.isEmpty()) {
+                onResult(false, "Group name cannot be empty")
+                return@launch
+            }
+            if (existingList.any { it.name.equals(trimmedName, ignoreCase = true) }) {
+                onResult(false, "Group '$trimmedName' already exists")
+                return@launch
+            }
+
+            val newGroup = InternalTagGroupEntity(
+                name = trimmedName,
+                description = description.trim()
+            )
+            repository.insertInternalTagGroup(newGroup)
+            onResult(true, "Added group '$trimmedName'")
+        }
+    }
+
+    fun updateInternalTagGroup(group: InternalTagGroupEntity, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val existingList = repository.getAllInternalTagGroupsList()
+            val trimmedName = group.name.trim()
+            if (trimmedName.isEmpty()) {
+                onResult(false, "Group name cannot be empty")
+                return@launch
+            }
+            if (existingList.any { it.id != group.id && it.name.equals(trimmedName, ignoreCase = true) }) {
+                onResult(false, "Group '$trimmedName' already exists")
+                return@launch
+            }
+
+            repository.updateInternalTagGroup(group.copy(name = trimmedName, description = group.description.trim()))
+            onResult(true, "Updated group '$trimmedName'")
+        }
+    }
+
+    fun deleteInternalTagGroup(group: InternalTagGroupEntity, onShowSnackbar: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteInternalTagGroup(group)
+            onShowSnackbar("Deleted group '${group.name}'")
+        }
+    }
+
+    val isInternalFormulaEnabled: StateFlow<Boolean> = repository.isInternalFormulaEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    fun setInternalFormulaEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setInternalFormulaEnabled(enabled)
+        }
+    }
+
+    val internalFormulaPeriodMs: StateFlow<Long> = repository.internalFormulaPeriodMs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 500L)
+
+    fun setInternalFormulaPeriodMs(periodMs: Long) {
+        viewModelScope.launch {
+            repository.setInternalFormulaPeriodMs(periodMs)
+        }
+    }
+
+    private val _formulaHeartbeatPulse = MutableStateFlow<Long>(0L)
+    val formulaHeartbeatPulse: StateFlow<Long> = _formulaHeartbeatPulse.asStateFlow()
+
+    private var internalFormulaJob: Job? = null
+
+    private fun startInternalFormulaPolling() {
+        internalFormulaJob?.cancel()
+        internalFormulaJob = viewModelScope.launch(Dispatchers.IO) {
+            combine(
+                repository.isInternalFormulaEnabled,
+                repository.internalFormulaPeriodMs
+            ) { enabled, periodMs ->
+                Pair(enabled, periodMs)
+            }.collectLatest { (enabled, periodMs) ->
+                while (isActive) {
+                    if (enabled) {
+                        _formulaHeartbeatPulse.value = System.currentTimeMillis()
+                        try {
+                            val activeIntTags = repository.getAllInternalTagsList().filter { it.isFormulaEnabled && (it.internalFormula.isNotBlank() || it.humanFormula.isNotBlank()) }
+                            if (activeIntTags.isNotEmpty()) {
+                                val allPlcTagsList = repository.getAllTagsSync()
+                                val allIntTagsList = repository.getAllInternalTagsList()
+
+                                val plcTagsMap = allPlcTagsList.associate { it.id to it.storedValue }
+                                val intTagsMap = allIntTagsList.associate { it.id to it.storedValue }.toMutableMap()
+
+                                val plcNameMap = allPlcTagsList.associate { it.name to it.storedValue }
+                                val intNameMap = allIntTagsList.associate { it.name to it.storedValue }.toMutableMap()
+
+                                for (tag in activeIntTags) {
+                                    val calculatedVal = evaluateFormulaValue(
+                                        internalFormula = tag.internalFormula,
+                                        humanFormula = tag.humanFormula,
+                                        plcTagsMap = plcTagsMap,
+                                        intTagsMap = intTagsMap,
+                                        plcNameMap = plcNameMap,
+                                        intNameMap = intNameMap
+                                    )
+
+                                    val isValid = calculatedVal != null && !calculatedVal.isNaN() && !calculatedVal.isInfinite()
+                                    val latestTag = repository.getInternalTagById(tag.id) ?: tag
+
+                                    if (isValid && calculatedVal != null) {
+                                        val formattedStr = if (tag.dataType == "BIN") {
+                                            if (calculatedVal != 0.0) "1" else "0"
+                                        } else if (tag.dataType == "FLOAT") {
+                                            String.format(Locale.US, "%.2f", calculatedVal)
+                                        } else {
+                                            calculatedVal.toLong().toString()
+                                        }
+
+                                        if (formattedStr != latestTag.storedValue || !latestTag.isFormulaValid) {
+                                            repository.updateInternalTag(latestTag.copy(storedValue = formattedStr, isFormulaValid = true))
+                                            intTagsMap[tag.id] = formattedStr
+                                            intNameMap[tag.name] = formattedStr
+                                        }
+                                    } else {
+                                        if (latestTag.isFormulaValid) {
+                                            repository.updateInternalTag(latestTag.copy(isFormulaValid = false))
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                    delay(periodMs.coerceIn(100L, 5000L))
+                }
+            }
+        }
+    }
+
+    private fun evaluateFormulaValue(
+        internalFormula: String,
+        humanFormula: String,
+        plcTagsMap: Map<Long, String>,
+        intTagsMap: Map<Long, String>,
+        plcNameMap: Map<String, String>,
+        intNameMap: Map<String, String>
+    ): Double? {
+        try {
+            var exprToEval = if (internalFormula.isNotBlank()) internalFormula else humanFormula
+
+            fun resolveTagValue(rawContent: String): String {
+                val content = rawContent.trim()
+                return when {
+                    content.startsWith("INT#") -> {
+                        val id = content.removePrefix("INT#").toLongOrNull()
+                        id?.let { intTagsMap[it] } ?: "0"
+                    }
+                    content.startsWith("#") -> {
+                        val body = content.removePrefix("#")
+                        val parts = body.split(":")
+                        val id = parts[0].toLongOrNull()
+                        val bitIdx = parts.getOrNull(1)?.toIntOrNull()
+                        val storedVal = id?.let { plcTagsMap[it] } ?: "0"
+                        if (bitIdx != null) {
+                            val parentVal = storedVal.toLongOrNull() ?: 0L
+                            if ((parentVal and (1L shl bitIdx)) != 0L) "1" else "0"
+                        } else storedVal
+                    }
+                    else -> {
+                        val foundVal = plcNameMap[content] ?: intNameMap[content]
+                        if (foundVal != null) {
+                            foundVal
+                        } else if (content.contains("-")) {
+                            val parentName = content.substringBeforeLast("-")
+                            val bitIdx = content.substringAfterLast("-").toIntOrNull()
+                            val parentValStr = plcNameMap[parentName] ?: intNameMap[parentName] ?: "0"
+                            if (bitIdx != null) {
+                                val parentVal = parentValStr.toLongOrNull() ?: 0L
+                                if ((parentVal and (1L shl bitIdx)) != 0L) "1" else "0"
+                            } else parentValStr
+                        } else "0"
+                    }
+                }
+            }
+
+            val tagBracketRegex = Regex("\\[[^\\]]+\\]")
+            exprToEval = tagBracketRegex.replace(exprToEval) { match ->
+                val content = match.value.removeSurrounding("[", "]")
+                val valStr = resolveTagValue(content)
+                valStr.toDoubleOrNull()?.toString() ?: "0.0"
+            }
+
+            return simpleEvalMath(exprToEval)
+        } catch (_: Exception) {
+            return null
+        }
+    }
+
+    private fun simpleEvalMath(expr: String): Double? {
+        return try {
+            val cleanExpr = expr.replace(" ", "")
+            if (cleanExpr.isBlank()) return null
+
+            var processingExpr = cleanExpr
+            val ifRegex = Regex("IF\\(([^,]+),([^,]+),([^)]+)\\)", RegexOption.IGNORE_CASE)
+            var ifLoopCount = 0
+            while (ifRegex.containsMatchIn(processingExpr) && ifLoopCount < 10) {
+                ifLoopCount++
+                val prevExpr = processingExpr
+                processingExpr = ifRegex.replace(processingExpr) { match ->
+                    val condStr = match.groupValues[1]
+                    val trueStr = match.groupValues[2]
+                    val falseStr = match.groupValues[3]
+
+                    val condVal = simpleEvalMath(condStr) ?: 0.0
+                    if (condVal != 0.0) trueStr else falseStr
+                }
+                if (processingExpr == prevExpr) break
+            }
+
+            object : Any() {
+                var pos = -1
+                var ch = 0
+
+                fun nextChar() {
+                    ch = if (++pos < processingExpr.length) processingExpr[pos].code else -1
+                }
+
+                fun eat(charToEat: Int): Boolean {
+                    while (ch == ' '.code) nextChar()
+                    if (ch == charToEat) {
+                        nextChar()
+                        return true
+                    }
+                    return false
+                }
+
+                fun eatString(str: String): Boolean {
+                    while (ch == ' '.code) nextChar()
+                    if (processingExpr.startsWith(str, pos)) {
+                        pos += str.length - 1
+                        nextChar()
+                        return true
+                    }
+                    return false
+                }
+
+                fun parse(): Double {
+                    nextChar()
+                    val x = parseComparison()
+                    if (pos < processingExpr.length) throw RuntimeException("Unexpected: " + ch.toChar())
+                    return x
+                }
+
+                fun parseComparison(): Double {
+                    var x = parseExpression()
+                    while (true) {
+                        when {
+                            eatString("==") -> x = if (x == parseExpression()) 1.0 else 0.0
+                            eatString("!=") -> x = if (x != parseExpression()) 1.0 else 0.0
+                            eatString(">=") -> x = if (x >= parseExpression()) 1.0 else 0.0
+                            eatString("<=") -> x = if (x <= parseExpression()) 1.0 else 0.0
+                            eatString(">") -> x = if (x > parseExpression()) 1.0 else 0.0
+                            eatString("<") -> x = if (x < parseExpression()) 1.0 else 0.0
+                            else -> return x
+                        }
+                    }
+                }
+
+                fun parseExpression(): Double {
+                    var x = parseTerm()
+                    while (true) {
+                        when {
+                            eat('+'.code) -> x += parseTerm()
+                            eat('-'.code) -> x -= parseTerm()
+                            else -> return x
+                        }
+                    }
+                }
+
+                fun parseTerm(): Double {
+                    var x = parseFactor()
+                    while (true) {
+                        when {
+                            eat('*'.code) -> x *= parseFactor()
+                            eat('/'.code) -> x /= parseFactor()
+                            else -> return x
+                        }
+                    }
+                }
+
+                fun parseFactor(): Double {
+                    if (eat('+'.code)) return parseFactor()
+                    if (eat('-'.code)) return -parseFactor()
+
+                    var x: Double
+                    val startPos = pos
+                    if (eat('('.code)) {
+                        x = parseComparison()
+                        eat(')'.code)
+                    } else if ((ch >= '0'.code && ch <= '9'.code) || ch == '.'.code) {
+                        while ((ch >= '0'.code && ch <= '9'.code) || ch == '.'.code) nextChar()
+                        x = processingExpr.substring(startPos, pos).toDouble()
+                    } else {
+                        throw RuntimeException("Unexpected: " + ch.toChar())
+                    }
+                    return x
+                }
+            }.parse()
+        } catch (_: Exception) {
+            null
         }
     }
 

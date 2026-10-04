@@ -18,9 +18,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         HeaderItem::class,
         ListScreenItems::class,
         GraphicsScreenItems::class,
-        TagListItems::class
+        TagListItems::class,
+        InternalTagEntity::class,
+        InternalTagGroupEntity::class
     ],
-    version = 35,
+    version = 40,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +37,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun listScreenItemsDao(): ListScreenItemsDao
     abstract fun graphicsScreenItemsDao(): GraphicsScreenItemsDao
     abstract fun tagListItemDao(): TagListItemDao
+    abstract fun internalTagDao(): InternalTagDao
+    abstract fun internalTagGroupDao(): InternalTagGroupDao
 
     companion object {
         @Volatile

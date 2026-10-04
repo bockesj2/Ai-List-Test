@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import com.example.ailisttest.data.local.InternalTagEntity
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
@@ -2474,6 +2475,7 @@ fun GraphicsItemConfigDialog(
     var showTagPicker by remember { mutableStateOf(false) }
 
     val graphicsGroupsWithItems by viewModel.graphicsGroupsWithItems.collectAsStateWithLifecycle()
+    val internalTags by viewModel.internalTags.collectAsStateWithLifecycle()
     val libraryGroups = remember(graphicsGroupsWithItems) {
         graphicsGroupsWithItems.map { it.screen }
     }
@@ -2563,12 +2565,6 @@ fun GraphicsItemConfigDialog(
         mutableStateOf(imageConfig.animTagId)
     }
 
-    val animTag = remember(hierarchy, selectedAnimTagId) {
-        if (selectedAnimTagId != null) {
-            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedAnimTagId }?.tag
-        } else null
-    }
-
     var isVisibilityEnabled by remember(dialogItem.id, dialogItem.configStr) {
         mutableStateOf(imageConfig.isVisibilityEnabled)
     }
@@ -2585,10 +2581,55 @@ fun GraphicsItemConfigDialog(
         mutableStateOf(imageConfig.isButtonTransparent)
     }
 
-    val visibilityTag = remember(hierarchy, selectedVisibilityTagId) {
-        if (selectedVisibilityTagId != null) {
-            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedVisibilityTagId }?.tag
-        } else null
+    fun resolveTagById(tagId: Long?): TagEntity? {
+        if (tagId == null) return null
+        return if (tagId < 0) {
+            val intTag = internalTags.find { it.id == -tagId }
+            intTag?.let {
+                TagEntity(
+                    id = -it.id,
+                    name = it.name,
+                    description = it.description,
+                    dataTypeId = 0L,
+                    storedValue = it.storedValue,
+                    offset = 0
+                )
+            }
+        } else {
+            hierarchy.flatMap { n -> n.packetsWithTags }
+                .flatMap { p -> p.tagsWithBitTags }
+                .find { t -> t.tag.id == tagId }?.tag
+        }
+    }
+
+    fun findTagByNameOrInternal(cleanName: String, chosenPath: String): TagEntity? {
+        val plcMatch = hierarchy.flatMap { node -> node.packetsWithTags }
+            .flatMap { p -> p.tagsWithBitTags }
+            .find { t -> t.tag.name == cleanName || chosenPath.endsWith(t.tag.name) }?.tag
+
+        if (plcMatch != null) return plcMatch
+
+        val intMatch = internalTags.find { it.name == cleanName || chosenPath.endsWith(it.name) }
+        if (intMatch != null) {
+            return TagEntity(
+                id = -intMatch.id,
+                name = intMatch.name,
+                description = intMatch.description,
+                dataTypeId = 0L,
+                storedValue = intMatch.storedValue,
+                offset = 0
+            )
+        }
+
+        return null
+    }
+
+    val animTag = remember(hierarchy, internalTags, selectedAnimTagId) {
+        resolveTagById(selectedAnimTagId)
+    }
+
+    val visibilityTag = remember(hierarchy, internalTags, selectedVisibilityTagId) {
+        resolveTagById(selectedVisibilityTagId)
     }
 
     val visibilityTagDisplayTitle = remember(visibilityTag, selectedVisibilityBitIndex) {
@@ -2601,22 +2642,16 @@ fun GraphicsItemConfigDialog(
 
     var activeTagPickingTarget by remember { mutableStateOf("itemTag") } // "itemTag", "offsetX", "offsetY", "rotation", "animOnOffTag", "animFrameTag", "visibilityTag"
 
-    val offsetXTag = remember(hierarchy, selectedOffsetXTagId) {
-        if (selectedOffsetXTagId != null) {
-            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedOffsetXTagId }?.tag
-        } else null
+    val offsetXTag = remember(hierarchy, internalTags, selectedOffsetXTagId) {
+        resolveTagById(selectedOffsetXTagId)
     }
 
-    val offsetYTag = remember(hierarchy, selectedOffsetYTagId) {
-        if (selectedOffsetYTagId != null) {
-            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedOffsetYTagId }?.tag
-        } else null
+    val offsetYTag = remember(hierarchy, internalTags, selectedOffsetYTagId) {
+        resolveTagById(selectedOffsetYTagId)
     }
 
-    val rotationTag = remember(hierarchy, selectedRotationTagId) {
-        if (selectedRotationTagId != null) {
-            hierarchy.flatMap { n -> n.packetsWithTags }.flatMap { p -> p.tagsWithBitTags }.find { t -> t.tag.id == selectedRotationTagId }?.tag
-        } else null
+    val rotationTag = remember(hierarchy, internalTags, selectedRotationTagId) {
+        resolveTagById(selectedRotationTagId)
     }
 
     // Available target screens for "Goto Page Button" (excluding current screen, Groups excluded)
@@ -2639,12 +2674,8 @@ fun GraphicsItemConfigDialog(
     val isBitTag = selectedItemType in 1..1000
     val bitIndex = if (isBitTag) (selectedItemType - 1) else null
 
-    val selectedTag = remember(hierarchy, selectedTagId) {
-        if (selectedTagId != null) {
-            hierarchy.flatMap { node -> node.packetsWithTags }
-                .flatMap { p -> p.tagsWithBitTags }
-                .find { t -> t.tag.id == selectedTagId }?.tag
-        } else null
+    val selectedTag = remember(hierarchy, internalTags, selectedTagId) {
+        resolveTagById(selectedTagId)
     }
 
     val displayTagTitle = remember(selectedTag, isBitTag, bitIndex) {
@@ -3554,6 +3585,7 @@ fun GraphicsItemConfigDialog(
         TagNamePickerDialog(
             hierarchy = hierarchy,
             dataTypes = dataTypes,
+            internalTags = internalTags,
             allowGroupSelection = false,
             allowMultipleSelection = false,
             showCreateGroupCheckbox = false,
@@ -3587,9 +3619,7 @@ fun GraphicsItemConfigDialog(
                         val parentName = bitMatch.groupValues[1].trim()
                         val bitIdx = bitMatch.groupValues[2].toIntOrNull() ?: 0
 
-                        val match = hierarchy.flatMap { node -> node.packetsWithTags }
-                            .flatMap { p -> p.tagsWithBitTags }
-                            .find { t -> t.tag.name == parentName || t.tag.name.endsWith(parentName) }?.tag
+                        val match = findTagByNameOrInternal(parentName, chosenPath)
 
                         if (match != null) {
                             when (activeTagPickingTarget) {
@@ -3608,9 +3638,7 @@ fun GraphicsItemConfigDialog(
                             }
                         }
                     } else {
-                        val match = hierarchy.flatMap { node -> node.packetsWithTags }
-                            .flatMap { p -> p.tagsWithBitTags }
-                            .find { t -> t.tag.name == cleanName || chosenPath.endsWith(t.tag.name) }?.tag
+                        val match = findTagByNameOrInternal(cleanName, chosenPath)
 
                         if (match != null) {
                             when (activeTagPickingTarget) {
@@ -3902,17 +3930,35 @@ fun GraphicsItemWidget(
     tag: TagEntity?,
     allScreens: List<Screens> = emptyList(),
     hierarchy: List<NodeWithPacketsAndTags> = emptyList(),
+    internalTags: List<InternalTagEntity> = emptyList(),
     enabled: Boolean = true,
     onNavigateToScreen: (Screens) -> Unit = {},
     onShowSnackbar: (String) -> Unit = {},
     onBitAction: (bitVal: Boolean?, isToggle: Boolean) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val effectiveTag = remember(tag, item.parentTagId, internalTags) {
+        if (tag != null) tag
+        else if (item.parentTagId != null && item.parentTagId!! < 0) {
+            val intTag = internalTags.find { it.id == -item.parentTagId!! }
+            intTag?.let {
+                TagEntity(
+                    id = -it.id,
+                    name = it.name,
+                    description = it.description,
+                    dataTypeId = 0L,
+                    storedValue = it.storedValue,
+                    offset = 0
+                )
+            }
+        } else null
+    }
+
     val displayType = item.DisplayType
-    val storedVal = tag?.storedValue ?: "0"
+    val storedVal = effectiveTag?.storedValue ?: "0"
     val isBitTagItem = item.Type in 1..1000
     val bitIndex = if (isBitTagItem) (item.Type - 1) else null
-    val parentTagVal = tag?.storedValue?.toLongOrNull() ?: 0L
+    val parentTagVal = effectiveTag?.storedValue?.toLongOrNull() ?: 0L
 
     val isBitSet = if (isBitTagItem && bitIndex != null) {
         ((parentTagVal and (1L shl bitIndex)) != 0L)
@@ -3921,8 +3967,8 @@ fun GraphicsItemWidget(
     }
 
     val tagDisplayName = when {
-        item.isShowTagName && tag != null && isBitTagItem && bitIndex != null -> "${tag.name}-$bitIndex"
-        item.isShowTagName && tag != null -> tag.name
+        item.isShowTagName && effectiveTag != null && isBitTagItem && bitIndex != null -> "${effectiveTag.name}-$bitIndex"
+        item.isShowTagName && effectiveTag != null -> effectiveTag.name
         else -> null
     }
 

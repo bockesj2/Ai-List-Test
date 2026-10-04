@@ -19,10 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.ailisttest.data.local.BitTags
 import com.example.ailisttest.data.local.DataTypes
+import com.example.ailisttest.data.local.InternalTagEntity
 import com.example.ailisttest.data.local.NodeWithPacketsAndTags
 import kotlinx.coroutines.launch
 
@@ -39,6 +41,7 @@ fun TagNamePickerDialog(
     filterNodeId: Long? = null,
     allowedPlcPreset: String? = null,
     allowedDataTypeCategory: String? = null, // "BINARY" or "INTEGER"
+    internalTags: List<InternalTagEntity> = emptyList(),
     onSelectNone: (() -> Unit)? = null,
     onTagsSelected: (selectedNames: List<String>, createNewGroup: Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -116,6 +119,8 @@ fun TagNamePickerDialog(
                     }
                 }
 
+                var expandedInternalNode by remember { mutableStateOf(true) }
+
                 // Scrollable Hierarchical Tree List
                 Box(
                     modifier = Modifier
@@ -124,128 +129,185 @@ fun TagNamePickerDialog(
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
                         .padding(4.dp)
                 ) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        effectiveHierarchy.forEach { nodeWithPackets ->
-                            val node = nodeWithPackets.node
-                            item(key = "picker_node_${node.id}") {
-                                PickerTreeRow(
-                                    text = "${node.name} (${node.ipAddress})",
-                                    level = 0,
-                                    isExpanded = expandedNodes[node.id] ?: true,
-                                    isSelected = selectedTagPaths.contains(node.name),
-                                    hasChildren = nodeWithPackets.packetsWithTags.isNotEmpty(),
-                                    leadingIcon = Icons.Rounded.NetworkCheck,
-                                    onToggleExpand = { expandedNodes[node.id] = !(expandedNodes[node.id] ?: true) },
-                                    onSelect = {
-                                        if (allowGroupSelection) {
-                                            toggleSelection(node.name)
-                                        } else {
-                                            expandedNodes[node.id] = !(expandedNodes[node.id] ?: true)
+                    if (effectiveHierarchy.isEmpty() && internalTags.isEmpty()) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize().padding(16.dp)
+                        ) {
+                            Text(
+                                text = "No tags available.\nAdd PLC nodes/packets in Configure/Tags/PLC or create Internal tags in Configure/Tags/Internal.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            // Internal Tags Section
+                            if (internalTags.isNotEmpty()) {
+                                item(key = "picker_internal_node") {
+                                    PickerTreeRow(
+                                        text = "Internal Tags",
+                                        level = 0,
+                                        isExpanded = expandedInternalNode,
+                                        isSelected = false,
+                                        hasChildren = true,
+                                        leadingIcon = Icons.Rounded.Storage,
+                                        onToggleExpand = { expandedInternalNode = !expandedInternalNode },
+                                        onSelect = { expandedInternalNode = !expandedInternalNode }
+                                    )
+                                }
+
+                                if (expandedInternalNode) {
+                                    internalTags.forEach { intTag ->
+                                        val isTagAllowed = when (allowedDataTypeCategory) {
+                                            "BINARY" -> intTag.dataType == "BIN"
+                                            "INTEGER" -> intTag.dataType != "FLOAT"
+                                            else -> true
+                                        }
+
+                                        if (isTagAllowed) {
+                                            item(key = "picker_int_tag_${intTag.id}") {
+                                                PickerTreeRow(
+                                                    text = intTag.name,
+                                                    level = 1,
+                                                    isExpanded = false,
+                                                    isSelected = selectedTagPaths.contains(intTag.name),
+                                                    hasChildren = false,
+                                                    badgeText = intTag.dataType,
+                                                    badgeColor = Color(0xFF2196F3),
+                                                    onToggleExpand = {},
+                                                    onSelect = { toggleSelection(intTag.name) }
+                                                )
+                                            }
                                         }
                                     }
-                                )
+                                }
                             }
 
-                            if (expandedNodes[node.id] != false) {
-                                nodeWithPackets.packetsWithTags.forEach { packetWithTags ->
-                                    val packet = packetWithTags.packet
-                                    val packetDataType = packet.type?.let { typeId -> dataTypes.find { it.id == typeId.toLong() } }
-                                        ?: dataTypes.find { it.shortName.equals("DS", ignoreCase = true) || it.dataType.equals("INT", ignoreCase = true) }
-                                        ?: DataTypes(id = 0, description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true)
-                                    val packetShortName = packetDataType.shortName.ifEmpty { packetDataType.description }
-                                    val packetBadgeText = "$packetShortName${packet.offset}"
-                                    val badgeColor = getPickerDataTypeBadgeColor(packetDataType) ?: Color(0xFF81C784)
-
-                                    item(key = "picker_packet_${packet.id}") {
-                                        PickerTreeRow(
-                                            text = packet.name,
-                                            level = 1,
-                                            isExpanded = expandedPackets[packet.id] ?: false,
-                                            isSelected = selectedTagPaths.contains(packet.name),
-                                            hasChildren = packetWithTags.tagsWithBitTags.isNotEmpty(),
-                                            leadingIcon = Icons.Rounded.AccountTree,
-                                            badgeText = packetBadgeText,
-                                            badgeColor = badgeColor,
-                                            onToggleExpand = { expandedPackets[packet.id] = !(expandedPackets[packet.id] ?: false) },
-                                            onSelect = {
-                                                if (allowGroupSelection) {
-                                                    toggleSelection(packet.name)
-                                                } else {
-                                                    expandedPackets[packet.id] = !(expandedPackets[packet.id] ?: false)
-                                                }
-                                            }
-                                        )
-                                    }
-
-                                    if (expandedPackets[packet.id] == true) {
-                                        packetWithTags.tagsWithBitTags.forEach { tagWithBitTags ->
-                                            val tag = tagWithBitTags.tag
-                                            val tagDataType = dataTypes.find { it.id == tag.dataTypeId } ?: packetDataType
-                                            val typeHasBits = tagDataType.hasBits
-                                            val numBits = tagDataType.bytes * 8
-
-                                            val bitTagsList = if (!allowBitSelection || !typeHasBits || numBits <= 0) {
-                                                emptyList()
-                                            } else if (tagWithBitTags.bitTags.isNotEmpty()) {
-                                                tagWithBitTags.bitTags
+                            // PLC Hardware Nodes Section
+                            effectiveHierarchy.forEach { nodeWithPackets ->
+                                val node = nodeWithPackets.node
+                                item(key = "picker_node_${node.id}") {
+                                    PickerTreeRow(
+                                        text = "${node.name} (${node.ipAddress})",
+                                        level = 0,
+                                        isExpanded = expandedNodes[node.id] ?: true,
+                                        isSelected = selectedTagPaths.contains(node.name),
+                                        hasChildren = nodeWithPackets.packetsWithTags.isNotEmpty(),
+                                        leadingIcon = Icons.Rounded.NetworkCheck,
+                                        onToggleExpand = { expandedNodes[node.id] = !(expandedNodes[node.id] ?: true) },
+                                        onSelect = {
+                                            if (allowGroupSelection) {
+                                                toggleSelection(node.name)
                                             } else {
-                                                (0 until numBits).map { bitIndex ->
-                                                    BitTags(
-                                                        id = (tag.id * 100 + bitIndex),
-                                                        name = "${tag.name}-$bitIndex",
-                                                        parentTagId = tag.id,
-                                                        bitIndex = bitIndex
-                                                    )
-                                                }
+                                                expandedNodes[node.id] = !(expandedNodes[node.id] ?: true)
                                             }
+                                        }
+                                    )
+                                }
 
-                                            val hasBitTags = bitTagsList.isNotEmpty()
-                                            val tagShortName = tagDataType.shortName.ifEmpty { tagDataType.description }
-                                            val tagBadgeText = "$tagShortName${tag.offset}"
-                                            val tagBadgeColor = getPickerDataTypeBadgeColor(tagDataType) ?: Color(0xFF81C784)
+                                if (expandedNodes[node.id] != false) {
+                                    nodeWithPackets.packetsWithTags.forEach { packetWithTags ->
+                                        val packet = packetWithTags.packet
+                                        val packetDataType = packet.type?.let { typeId -> dataTypes.find { it.id == typeId.toLong() } }
+                                            ?: dataTypes.find { it.shortName.equals("DS", ignoreCase = true) || it.dataType.equals("INT", ignoreCase = true) }
+                                            ?: DataTypes(id = 0, description = "Data Register Short", shortName = "DS", dataType = "INT", bytes = 2, defaultModbusAddress = 400001L, isZeroBasedAddressing = false, hasBits = true)
+                                        val packetShortName = packetDataType.shortName.ifEmpty { packetDataType.description }
+                                        val packetBadgeText = "$packetShortName${packet.offset}"
+                                        val badgeColor = getPickerDataTypeBadgeColor(packetDataType) ?: Color(0xFF81C784)
 
-                                            val isFloatType = tagDataType.shortName.equals("DF", ignoreCase = true) ||
-                                                    tagDataType.dataType.contains("FLOAT", ignoreCase = true) ||
-                                                    tagDataType.dataType.contains("DOUBLE", ignoreCase = true) ||
-                                                    tagDataType.dataType.contains("REAL", ignoreCase = true)
-
-                                            val isTagAllowed = when (allowedDataTypeCategory) {
-                                                "BINARY" -> typeHasBits || tagDataType.dataType.contains("BIT", ignoreCase = true) || tagDataType.dataType.contains("BOOL", ignoreCase = true)
-                                                "INTEGER" -> !isFloatType
-                                                else -> true
-                                            }
-
-                                            if (isTagAllowed) {
-                                                item(key = "picker_tag_${tag.id}") {
-                                                    PickerTreeRow(
-                                                        text = tag.name,
-                                                        level = 2,
-                                                        isExpanded = expandedTags[tag.id] ?: false,
-                                                        isSelected = selectedTagPaths.contains(tag.name),
-                                                        hasChildren = hasBitTags,
-                                                        badgeText = tagBadgeText,
-                                                        badgeColor = tagBadgeColor,
-                                                        onToggleExpand = { expandedTags[tag.id] = !(expandedTags[tag.id] ?: false) },
-                                                        onSelect = { toggleSelection(tag.name) }
-                                                    )
+                                        item(key = "picker_packet_${packet.id}") {
+                                            PickerTreeRow(
+                                                text = packet.name,
+                                                level = 1,
+                                                isExpanded = expandedPackets[packet.id] ?: false,
+                                                isSelected = selectedTagPaths.contains(packet.name),
+                                                hasChildren = packetWithTags.tagsWithBitTags.isNotEmpty(),
+                                                leadingIcon = Icons.Rounded.AccountTree,
+                                                badgeText = packetBadgeText,
+                                                badgeColor = badgeColor,
+                                                onToggleExpand = { expandedPackets[packet.id] = !(expandedPackets[packet.id] ?: false) },
+                                                onSelect = {
+                                                    if (allowGroupSelection) {
+                                                        toggleSelection(packet.name)
+                                                    } else {
+                                                        expandedPackets[packet.id] = !(expandedPackets[packet.id] ?: false)
+                                                    }
                                                 }
+                                            )
+                                        }
 
-                                                if (allowBitSelection && expandedTags[tag.id] == true && hasBitTags) {
-                                                    items(bitTagsList, key = { "picker_bitTag_${it.parentTagId}_${it.bitIndex}" }) { bitTag ->
-                                                        PickerTreeRow(
-                                                            text = bitTag.name,
-                                                            level = 3,
-                                                            isExpanded = false,
-                                                            isSelected = selectedTagPaths.contains(bitTag.name),
-                                                            hasChildren = false,
-                                                            badgeText = "${tagShortName}${tag.offset}:${bitTag.bitIndex}",
-                                                            badgeColor = Color(0xFF00BCD4),
-                                                            onToggleExpand = {},
-                                                            onSelect = { toggleSelection(bitTag.name) }
+                                        if (expandedPackets[packet.id] == true) {
+                                            packetWithTags.tagsWithBitTags.forEach { tagWithBitTags ->
+                                                val tag = tagWithBitTags.tag
+                                                val tagDataType = dataTypes.find { it.id == tag.dataTypeId } ?: packetDataType
+                                                val typeHasBits = tagDataType.hasBits
+                                                val numBits = tagDataType.bytes * 8
+
+                                                val bitTagsList = if (!allowBitSelection || !typeHasBits || numBits <= 0) {
+                                                    emptyList()
+                                                } else if (tagWithBitTags.bitTags.isNotEmpty()) {
+                                                    tagWithBitTags.bitTags
+                                                } else {
+                                                    (0 until numBits).map { bitIndex ->
+                                                        BitTags(
+                                                            id = (tag.id * 100 + bitIndex),
+                                                            name = "${tag.name}-$bitIndex",
+                                                            parentTagId = tag.id,
+                                                            bitIndex = bitIndex
                                                         )
+                                                    }
+                                                }
+
+                                                val hasBitTags = bitTagsList.isNotEmpty()
+                                                val tagShortName = tagDataType.shortName.ifEmpty { tagDataType.description }
+                                                val tagBadgeText = "$tagShortName${tag.offset}"
+                                                val tagBadgeColor = getPickerDataTypeBadgeColor(tagDataType) ?: Color(0xFF81C784)
+
+                                                val isFloatType = tagDataType.shortName.equals("DF", ignoreCase = true) ||
+                                                        tagDataType.dataType.contains("FLOAT", ignoreCase = true) ||
+                                                        tagDataType.dataType.contains("DOUBLE", ignoreCase = true) ||
+                                                        tagDataType.dataType.contains("REAL", ignoreCase = true)
+
+                                                val isTagAllowed = when (allowedDataTypeCategory) {
+                                                    "BINARY" -> typeHasBits || tagDataType.dataType.contains("BIT", ignoreCase = true) || tagDataType.dataType.contains("BOOL", ignoreCase = true)
+                                                    "INTEGER" -> !isFloatType
+                                                    else -> true
+                                                }
+
+                                                if (isTagAllowed) {
+                                                    item(key = "picker_tag_${tag.id}") {
+                                                        PickerTreeRow(
+                                                            text = tag.name,
+                                                            level = 2,
+                                                            isExpanded = expandedTags[tag.id] ?: false,
+                                                            isSelected = selectedTagPaths.contains(tag.name),
+                                                            hasChildren = hasBitTags,
+                                                            badgeText = tagBadgeText,
+                                                            badgeColor = tagBadgeColor,
+                                                            onToggleExpand = { expandedTags[tag.id] = !(expandedTags[tag.id] ?: false) },
+                                                            onSelect = { toggleSelection(tag.name) }
+                                                        )
+                                                    }
+
+                                                    if (allowBitSelection && expandedTags[tag.id] == true && hasBitTags) {
+                                                        items(bitTagsList, key = { "picker_bitTag_${it.parentTagId}_${it.bitIndex}" }) { bitTag ->
+                                                            PickerTreeRow(
+                                                                text = bitTag.name,
+                                                                level = 3,
+                                                                isExpanded = false,
+                                                                isSelected = selectedTagPaths.contains(bitTag.name),
+                                                                hasChildren = false,
+                                                                badgeText = "$tagShortName${tag.offset}:${bitTag.bitIndex}",
+                                                                badgeColor = Color(0xFF00BCD4),
+                                                                onToggleExpand = {},
+                                                                onSelect = { toggleSelection(bitTag.name) }
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -480,14 +542,17 @@ fun PickerTreeRow(
 }
 
 fun getPickerDataTypeBadgeColor(dataType: DataTypes?): Color? {
-    if (dataType == null) return null
-    val name = dataType.shortName.ifEmpty { dataType.description }
-    return when {
-        name.startsWith("DS", ignoreCase = true) || name.startsWith("INT", ignoreCase = true) -> Color(0xFF4CAF50)
-        name.startsWith("DD", ignoreCase = true) || name.startsWith("DINT", ignoreCase = true) -> Color(0xFF2196F3)
-        name.startsWith("DH", ignoreCase = true) || name.startsWith("HEX", ignoreCase = true) -> Color(0xFFFF9800)
-        name.startsWith("DF", ignoreCase = true) || name.startsWith("FLOAT", ignoreCase = true) -> Color(0xFF9C27B0)
-        name.startsWith("B", ignoreCase = true) -> Color(0xFF00BCD4)
-        else -> null
+    if (dataType?.dataType.equals("BIN", ignoreCase = true) || dataType?.shortName.equals("BIN", ignoreCase = true) || dataType?.hasBits == true) {
+        return Color(0xFF00BCD4)
+    }
+    return when (dataType?.shortName?.uppercase()) {
+        "C", "CT", "CTD", "CTU" -> Color(0xFFAB47BC)
+        "T", "TMR" -> Color(0xFFFFA726)
+        "DS" -> Color(0xFF26A69A)
+        "DD" -> Color(0xFF42A5F5)
+        "DF" -> Color(0xFFEC407A)
+        "DH" -> Color(0xFF7E57C2)
+        "TXT" -> Color(0xFF78909C)
+        else -> Color(0xFF81C784)
     }
 }

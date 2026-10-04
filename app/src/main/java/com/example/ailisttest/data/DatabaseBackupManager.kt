@@ -428,7 +428,7 @@ object DatabaseBackupManager {
                 val obj = nodesArray.getJSONObject(i)
                 val oldId = obj.optLong("id", -1L)
                 val name = obj.optString("name", "Node").trim()
-                val ip = obj.optString("ipAddress", "127.0.0.1")
+                val ip = obj.optString("ipAddress", "192.168.0.10")
 
                 val existing = existingNodes.find { it.name.trim().equals(name, ignoreCase = true) }
 
